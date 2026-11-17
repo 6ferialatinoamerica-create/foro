@@ -1,0 +1,262 @@
+interface ApiRequest {
+    method?: string;
+    headers: Record<string, string | string[] | undefined>;
+    body?: unknown;
+    on?: (event: string, listener: (chunk: Buffer | string) => void) => void;
+}
+
+interface ApiResponse {
+    status: (code: number) => ApiResponse;
+    json: (data: unknown) => void;
+    setHeader: (name: string, value: string) => void;
+    end: (body?: string) => void;
+}
+
+const readJsonBody = async (req: ApiRequest): Promise<Record<string, unknown>> => {
+    if (req.body && typeof req.body === 'object') {
+        return req.body as Record<string, unknown>;
+    }
+    if (typeof req.body === 'string') {
+        try {
+            return JSON.parse(req.body) as Record<string, unknown>;
+        } catch {
+            return {};
+        }
+    }
+    if (!req.on) return {};
+
+    const raw = await new Promise<string>((resolve) => {
+        let data = '';
+        req.on?.('data', (chunk) => {
+            data += chunk.toString();
+        });
+        req.on?.('end', () => resolve(data));
+    });
+
+    try {
+        return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    } catch {
+        return {};
+    }
+};
+
+export default async function handler(req: ApiRequest, res: ApiResponse) {
+    if (req.method === 'OPTIONS') {
+        res.setHeader('Allow', 'POST, OPTIONS');
+        res.status(204).end();
+        return;
+    }
+
+    if (req.method !== 'POST') {
+        res.status(405).json({ ok: false, message: 'Método no permitido' });
+        return;
+    }
+
+    const supabaseUrl = (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '').trim();
+    const supabaseKey = (process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '').trim();
+
+    if (!supabaseUrl || !supabaseKey) {
+        res.status(503).json({
+            ok: false,
+            notConfigured: true,
+            message: 'Supabase aún no está configurado en el servidor.',
+        });
+        return;
+    }
+
+    const body = await readJsonBody(req);
+    const action = String(body.action || '');
+    const adminEmail = String(body.adminEmail || '');
+    const accessKey = String(body.accessKey || '');
+
+    let rpcName = '';
+    let rpcPayload: Record<string, unknown> = {};
+
+    switch (action) {
+        case 'verify':
+            rpcName = 'verify_admin_access';
+            rpcPayload = { p_admin_email: adminEmail, p_access_key: accessKey };
+            break;
+        case 'change_password':
+            rpcName = 'admin_change_password';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_current_key: accessKey,
+                p_new_key: String(body.newKey || ''),
+            };
+            break;
+        case 'register_admin':
+            rpcName = 'admin_register_user';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_display_name: String(body.displayName || 'Administrador'),
+                p_requester_email: String(body.requesterEmail || ''),
+                p_requester_key: String(body.requesterKey || ''),
+                p_role: body.role === 'teacher' ? 'teacher' : 'owner',
+                p_must_change_password: body.mustChangePassword === true,
+            };
+            break;
+        case 'request_collaborator':
+            rpcName = 'request_collaborator_access';
+            rpcPayload = {
+                p_email: adminEmail,
+                p_access_key: accessKey,
+                p_display_name: String(body.displayName || ''),
+            };
+            break;
+        case 'review_collaborator':
+            rpcName = 'admin_review_collaborator';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_target_admin_id: String(body.targetAdminId || ''),
+                p_approve: body.approve === true,
+            };
+            break;
+        case 'delete_admin':
+            rpcName = 'admin_delete_user';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_target_admin_id: String(body.targetAdminId || ''),
+            };
+            break;
+        case 'dashboard':
+            rpcName = 'admin_list_dashboard';
+            rpcPayload = { p_admin_email: adminEmail, p_access_key: accessKey };
+            break;
+        case 'upsert_student':
+            rpcName = 'admin_upsert_student';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_email: String(body.email || ''),
+                p_purchase_code: String(body.purchaseCode || ''),
+                p_full_name: String(body.fullName || ''),
+                p_classroom_password: String(body.classroomPassword || ''),
+                p_classroom_url: String(body.classroomUrl || ''),
+                p_max_devices: Number(body.maxDevices || 2),
+                p_is_active: body.isActive !== false,
+            };
+            break;
+        case 'bulk_upsert_students':
+            rpcName = 'admin_upsert_students_bulk';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_students: Array.isArray(body.students) ? body.students : [],
+            };
+            break;
+        case 'reset_devices':
+            rpcName = 'admin_reset_student_devices';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_student_id: String(body.studentId || ''),
+            };
+            break;
+        case 'delete_student':
+            rpcName = 'admin_delete_student';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_student_id: String(body.studentId || ''),
+            };
+            break;
+        case 'reply_forum_question':
+            rpcName = 'admin_reply_forum_question';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_question_id: String(body.questionId || ''),
+                p_teacher_name: String(body.teacherName || ''),
+                p_reply_body: String(body.replyBody || ''),
+            };
+            break;
+        case 'delete_forum_question':
+            rpcName = 'admin_delete_forum_question';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_question_id: String(body.questionId || ''),
+            };
+            break;
+        case 'update_forum_question':
+            rpcName = 'admin_update_forum_question';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_question_id: String(body.questionId || ''),
+                p_title: String(body.title || ''),
+                p_body: String(body.body || ''),
+                p_author_name: String(body.authorName || ''),
+            };
+            break;
+        case 'update_forum_reply':
+            rpcName = 'admin_update_forum_reply';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_reply_id: String(body.replyId || ''),
+                p_body: String(body.body || ''),
+            };
+            break;
+        case 'delete_forum_reply':
+            rpcName = 'admin_delete_forum_reply';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_reply_id: String(body.replyId || ''),
+            };
+            break;
+        default:
+            res.status(400).json({ ok: false, message: 'Acción de administrador no válida.' });
+            return;
+    }
+
+    try {
+        const rpcRes = await fetch(`${supabaseUrl}/rest/v1/rpc/${rpcName}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                apikey: supabaseKey,
+                Authorization: `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify(rpcPayload),
+        });
+
+        const data = (await rpcRes.json()) as { message?: string; code?: string; details?: string };
+        if (!rpcRes.ok) {
+            const rawMessage = String(data?.message || '');
+            const isMissingSchemaFn =
+                data?.code === 'PGRST202' ||
+                rawMessage.includes('schema cache') ||
+                rawMessage.includes('Could not find the function') ||
+                rawMessage.includes('does not exist');
+
+            if (isMissingSchemaFn) {
+                res.status(rpcRes.status).json({
+                    ok: false,
+                    needsSchemaUpdate: true,
+                    message:
+                        'Tu base de datos en Supabase aún tiene una versión anterior (faltan funciones nuevas como registro de administradores).\n\nSolución rápida:\n1. Abre tu proyecto en Supabase → SQL Editor → New query.\n2. Copia y pega el contenido completo del archivo "supabase/schema.sql" de tu proyecto actualizado y presiona Run.\n3. Vuelve aquí e intenta nuevamente.',
+                });
+                return;
+            }
+
+            res.status(rpcRes.status).json({
+                ok: false,
+                message: rawMessage || 'Error al ejecutar operación de administrador.',
+            });
+            return;
+        }
+
+        res.status(200).json(data);
+    } catch {
+        res.status(500).json({
+            ok: false,
+            message: 'Error de conexión con el panel de administrador.',
+        });
+    }
+}
