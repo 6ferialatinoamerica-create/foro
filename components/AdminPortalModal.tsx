@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { classData } from '../constants';
 import { isSupabaseConfigured } from '../lib/supabaseClient';
 import {
@@ -32,7 +32,14 @@ import {
     adminUpdateForumReply,
     fetchForumQuestions,
 } from '../services/forumService';
+import {
+    countryCodeToFlag,
+    getCountryDisplayName,
+    normalizeCountryCode,
+} from '../utils/countryFlag';
 import type {
+    ActivityEventType,
+    ActivityLogEntry,
     AdminRole,
     AdminStudentRecord,
     AdminUserSummary,
@@ -45,7 +52,7 @@ import type {
 interface AdminPortalModalProps {
     isOpen: boolean;
     onClose: () => void;
-    initialTab?: 'students' | 'alerts' | 'forum' | 'recordings';
+    initialTab?: 'students' | 'alerts' | 'forum' | 'recordings' | 'metrics';
     onForumUpdated?: () => void;
     onRecordingsUpdated?: () => void;
     onAdminSessionChange?: (session: SavedAdminCredentials | null) => void;
@@ -55,9 +62,40 @@ const normalizeAdminRole = (role: unknown): AdminRole =>
     role === 'teacher' ? 'teacher' : role === 'support' ? 'support' : 'owner';
 
 const getRoleHeaderLabel = (role: AdminRole): string => {
-    if (role === 'owner') return 'Dueño/a (Acceso total)';
+    if (role === 'owner') return 'Organizador/a (Acceso total · CEO del aula)';
     if (role === 'support') return 'Soporte (Apoyo logístico)';
     return 'Profesor/a (Solo Foro)';
+};
+
+const formatDateTime = (isoString: string): string => {
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return '';
+    const dateStr = d.toLocaleDateString('es-ES', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+    });
+    const timeStr = d.toLocaleTimeString('es-ES', {
+        hour: 'numeric',
+        minute: '2-digit',
+    });
+    return `${dateStr} · ${timeStr}`;
+};
+
+const formatResponseDuration = (avgMinutes: number | null): string => {
+    if (avgMinutes === null || Number.isNaN(avgMinutes)) return 'Sin datos aún';
+    if (avgMinutes < 1) return '< 1 min';
+    if (avgMinutes < 60) return `${Math.round(avgMinutes)} min`;
+    const hours = Math.floor(avgMinutes / 60);
+    const mins = Math.round(avgMinutes % 60);
+    return mins > 0 ? `${hours} h ${mins} min` : `${hours} h`;
+};
+
+const ACTIVITY_LABELS: Record<ActivityEventType, string> = {
+    student_login: 'Acceso al portal',
+    classroom_click: 'Clic a ClassOnLive',
+    forum_question: 'Pregunta en foro',
+    forum_reply: 'Respuesta en foro',
 };
 
 const generateRandomPassword = () => {
@@ -102,13 +140,14 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
     const [authSuccessNotice, setAuthSuccessNotice] = useState<string | null>(null);
     const [hasSavedCreds, setHasSavedCreds] = useState(false);
 
-    const [activeTab, setActiveTab] = useState<'students' | 'alerts' | 'forum' | 'recordings' | 'admins'>(
+    const [activeTab, setActiveTab] = useState<'students' | 'alerts' | 'forum' | 'recordings' | 'metrics' | 'admins'>(
         initialTab
     );
     const [students, setStudents] = useState<AdminStudentRecord[]>([]);
     const [alerts, setAlerts] = useState<DeviceAccessAlert[]>([]);
     const [admins, setAdmins] = useState<AdminUserSummary[]>([]);
     const [recordingsMap, setRecordingsMap] = useState<RecordingStatusMap>({});
+    const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
     const [togglingWorkshopId, setTogglingWorkshopId] = useState<string | null>(null);
     const [updatingRoleAdminId, setUpdatingRoleAdminId] = useState<string | null>(null);
     const [forumQuestions, setForumQuestions] = useState<ForumQuestion[]>([]);
@@ -176,6 +215,7 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
             setAlerts(res.alerts || []);
             setAdmins(res.admins || []);
             setRecordingsMap(res.recordings || {});
+            setActivityLogs(res.activityLogs || []);
         } else {
             setFeedbackMsg(res.message || 'No se pudo cargar la información.');
         }
@@ -371,7 +411,7 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
 
         setCollabNotice(
             res.message ||
-                '¡Solicitud enviada! Un dueño de la feria aprobará tu perfil para que puedas responder en el foro.'
+                '¡Solicitud enviada! Un organizador de la feria aprobará tu perfil para que puedas responder en el foro.'
         );
         setCollabKey('');
         setCollabConfirmKey('');
@@ -933,6 +973,163 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
     const canManageStudentsAndRecordings = adminRole === 'owner' || adminRole === 'support';
     const readyRecordingsCount = classData.filter((c) => Boolean(recordingsMap[c.id])).length;
 
+    const metricsSummary = useMemo(() => {
+        const totalStudents = students.length;
+        const activatedStudents = students.filter(
+            (s) => s.authorizedDevicesCount > 0 || !s.needsPasswordSetup
+        ).length;
+        const activationPct =
+            totalStudents > 0 ? Math.round((activatedStudents / totalStudents) * 100) : 0;
+        const totalAuthorizedDevices = students.reduce(
+            (acc, s) => acc + (s.authorizedDevicesCount || 0),
+            0
+        );
+
+        const loginCount = activityLogs.filter((l) => l.eventType === 'student_login').length;
+        const classroomClickCount = activityLogs.filter(
+            (l) => l.eventType === 'classroom_click'
+        ).length;
+        const forumActivityCount = activityLogs.filter(
+            (l) => l.eventType === 'forum_question' || l.eventType === 'forum_reply'
+        ).length;
+
+        const totalQuestions = forumQuestions.length;
+        const answeredQuestions = forumQuestions.filter((q) => q.status === 'answered').length;
+        const pendingQuestions = totalQuestions - answeredQuestions;
+        const forumResolutionPct =
+            totalQuestions > 0 ? Math.round((answeredQuestions / totalQuestions) * 100) : 0;
+
+        const responseDeltasMinutes: number[] = [];
+        forumQuestions.forEach((q) => {
+            const qTime = new Date(q.createdAt).getTime();
+            if (Number.isNaN(qTime)) return;
+            const officialReply = q.replies.find((r) => r.isOfficial || r.authorRole === 'teacher');
+            if (!officialReply) return;
+            const rTime = new Date(officialReply.createdAt).getTime();
+            if (!Number.isNaN(rTime) && rTime >= qTime) {
+                responseDeltasMinutes.push((rTime - qTime) / (1000 * 60));
+            }
+        });
+        const avgResponseMinutes =
+            responseDeltasMinutes.length > 0
+                ? responseDeltasMinutes.reduce((a, b) => a + b, 0) / responseDeltasMinutes.length
+                : null;
+
+        const totalCompletedChecks = students.reduce(
+            (sum, s) => sum + (s.completedClassIds?.length || 0),
+            0
+        );
+        const avgClassesCompleted =
+            totalStudents > 0 ? (totalCompletedChecks / totalStudents).toFixed(1) : '0.0';
+
+        // Conteo de clases marcadas como vistas y clics a ClassOnLive por taller
+        const workshopStats = classData
+            .map((c) => {
+                const completedBy = students.filter((s) =>
+                    s.completedClassIds?.includes(c.id)
+                ).length;
+                const clicks = activityLogs.filter(
+                    (l) => l.eventType === 'classroom_click' && l.workshopId === c.id
+                ).length;
+                const doubts = forumQuestions.filter((q) => q.workshopId === c.id).length;
+                return {
+                    id: c.id,
+                    title: c.shortTitle || c.titulo,
+                    completedBy,
+                    clicks,
+                    doubts,
+                    totalScore: completedBy + clicks + doubts,
+                };
+            })
+            .sort((a, b) => b.totalScore - a.totalScore || b.completedBy - a.completedBy);
+
+        // Distribución por país (alumnas registradas + eventos registrados + foro)
+        const countryCountMap = new Map<string, { students: number; interactions: number }>();
+        const addCountryStat = (rawCode: string | null | undefined, type: 'student' | 'interaction') => {
+            const code = normalizeCountryCode(rawCode);
+            if (!code) return;
+            const existing = countryCountMap.get(code) || { students: 0, interactions: 0 };
+            if (type === 'student') existing.students += 1;
+            else existing.interactions += 1;
+            countryCountMap.set(code, existing);
+        };
+
+        students.forEach((s) => addCountryStat(s.primaryCountry, 'student'));
+        activityLogs.forEach((l) => addCountryStat(l.countryCode, 'interaction'));
+        if (activityLogs.length === 0) {
+            forumQuestions.forEach((q) => {
+                addCountryStat(q.countryCode, 'interaction');
+                q.replies.forEach((r) => addCountryStat(r.countryCode, 'interaction'));
+            });
+        }
+
+        const totalCountryHits = Array.from(countryCountMap.values()).reduce(
+            (sum, item) => sum + item.students + item.interactions,
+            0
+        );
+        const countryRanking = Array.from(countryCountMap.entries())
+            .map(([code, counts]) => {
+                const total = counts.students + counts.interactions;
+                return {
+                    code,
+                    flag: countryCodeToFlag(code),
+                    name: getCountryDisplayName(code),
+                    students: counts.students,
+                    interactions: counts.interactions,
+                    total,
+                    pct: totalCountryHits > 0 ? Math.round((total / totalCountryHits) * 100) : 0,
+                };
+            })
+            .sort((a, b) => b.total - a.total);
+
+        // Franja horaria de actividad (usando registros reales y foro)
+        const timeSlots = [
+            { id: 'morning', label: 'Mañana (06:00 - 11:59)', count: 0 },
+            { id: 'afternoon', label: 'Tarde (12:00 - 17:59)', count: 0 },
+            { id: 'evening', label: 'Noche (18:00 - 23:59)', count: 0 },
+            { id: 'night', label: 'Madrugada (00:00 - 05:59)', count: 0 },
+        ];
+        const timestamps: string[] =
+            activityLogs.length > 0
+                ? activityLogs.map((l) => l.createdAt)
+                : [
+                      ...forumQuestions.map((q) => q.createdAt),
+                      ...forumQuestions.flatMap((q) => q.replies.map((r) => r.createdAt)),
+                  ];
+
+        timestamps.forEach((iso) => {
+            const d = new Date(iso);
+            if (Number.isNaN(d.getTime())) return;
+            const hour = d.getHours();
+            if (hour >= 6 && hour < 12) timeSlots[0].count += 1;
+            else if (hour >= 12 && hour < 18) timeSlots[1].count += 1;
+            else if (hour >= 18) timeSlots[2].count += 1;
+            else timeSlots[3].count += 1;
+        });
+        const maxSlotCount = Math.max(1, ...timeSlots.map((s) => s.count));
+
+        return {
+            totalStudents,
+            activatedStudents,
+            activationPct,
+            totalAuthorizedDevices,
+            loginCount,
+            classroomClickCount,
+            forumActivityCount,
+            totalQuestions,
+            answeredQuestions,
+            pendingQuestions,
+            forumResolutionPct,
+            avgResponseMinutes,
+            totalCompletedChecks,
+            avgClassesCompleted,
+            workshopStats,
+            countryRanking,
+            timeSlots,
+            maxSlotCount,
+        };
+    }, [students, activityLogs, forumQuestions]);
+
     const getAlertReasonLabel = (reason: DeviceAccessAlert['reason']) => {
         if (reason === 'IP_MISMATCH') return 'Bloqueo por IP distinta (posible enlace compartido)';
         if (reason === 'COUNTRY_MISMATCH') return 'Bloqueo por país distinto';
@@ -1058,8 +1255,8 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                 {authMode === 'collaborator'
                                     ? 'Solicita tu acceso como profesora / colaboradora para responder dudas en el foro.'
                                     : authMode === 'register'
-                                      ? 'Registra una cuenta de administrador (requiere autorización de un dueño activo).'
-                                      : 'Ingresa con tu correo y contraseña (o clave temporal 1234 si eres dueño/a).'}
+                                      ? 'Registra una cuenta de administrador (requiere autorización de un organizador activo).'
+                                      : 'Ingresa con tu correo y contraseña (o clave temporal 1234 si eres organizador/a).'}
                             </p>
                         </div>
 
@@ -1119,7 +1316,7 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                         {authMode === 'login' ? (
                             <form onSubmit={handleAdminLogin} className="space-y-3.5">
                                 <div className="p-2.5 rounded-xl bg-[#FBF5E6] border border-[#E5DAC0] text-[11px] text-[#2B2B2B]/80 leading-relaxed">
-                                    <strong>¿Primera vez?</strong> Los dueños entran con la clave temporal asignada y la cambian al instante; las colaboradoras aprobadas ingresan aquí con su clave.
+                                    <strong>¿Primera vez?</strong> Los organizadores entran con la clave temporal asignada y la cambian al instante; las colaboradoras aprobadas ingresan aquí con su clave.
                                 </div>
                                 <div>
                                     <label htmlFor="admin-email" className="block text-xs font-bold text-[#2B2B2B] mb-1">
@@ -1201,7 +1398,7 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                         ) : authMode === 'collaborator' ? (
                             <form onSubmit={handleCollaboratorSubmit} className="space-y-3.5">
                                 <div className="p-3 rounded-xl bg-[#FBF5E6] border border-[#E5DAC0] text-[11px] text-[#2B2B2B]/85 leading-relaxed">
-                                    <strong>Acceso exclusivo para el Foro de Dudas:</strong> esta clave es solo para identificarte en esta app, responder preguntas y editar tus propias respuestas. Un dueño de la feria aprobará tu solicitud antes de activarla.
+                                    <strong>Acceso exclusivo para el Foro de Dudas:</strong> esta clave es solo para identificarte en esta app, responder preguntas y editar tus propias respuestas. Un organizador de la feria aprobará tu solicitud antes de activarla.
                                 </div>
 
                                 <div>
@@ -1573,22 +1770,35 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                 </>
                             )}
                             {adminRole === 'owner' && (
-                                <button
-                                    type="button"
-                                    onClick={() => setActiveTab('admins')}
-                                    className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors tabular-nums flex items-center gap-1.5 ${
-                                        activeTab === 'admins'
-                                            ? 'bg-[#2B2B2B] text-white'
-                                            : 'text-[#2B2B2B] hover:text-[#3F6B45]'
-                                    }`}
-                                >
-                                    <span>Administradores ({approvedAdmins.length})</span>
-                                    {pendingCollaborators.length > 0 && (
-                                        <span className="px-2 py-0.5 rounded-full bg-[#A3363D] text-white text-[10px] font-extrabold">
-                                            {pendingCollaborators.length} por aprobar
-                                        </span>
-                                    )}
-                                </button>
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('metrics')}
+                                        className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors tabular-nums flex items-center gap-1.5 ${
+                                            activeTab === 'metrics'
+                                                ? 'bg-[#3F6B45] text-white'
+                                                : 'text-[#2B2B2B] hover:text-[#3F6B45]'
+                                        }`}
+                                    >
+                                        <span>📊 Métricas</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('admins')}
+                                        className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors tabular-nums flex items-center gap-1.5 ${
+                                            activeTab === 'admins'
+                                                ? 'bg-[#2B2B2B] text-white'
+                                                : 'text-[#2B2B2B] hover:text-[#3F6B45]'
+                                        }`}
+                                    >
+                                        <span>Administradores ({approvedAdmins.length})</span>
+                                        {pendingCollaborators.length > 0 && (
+                                            <span className="px-2 py-0.5 rounded-full bg-[#A3363D] text-white text-[10px] font-extrabold">
+                                                {pendingCollaborators.length} por aprobar
+                                            </span>
+                                        )}
+                                    </button>
+                                </>
                             )}
                         </div>
 
@@ -1846,6 +2056,11 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                                 >
                                                     <div className="min-w-0 space-y-0.5">
                                                         <div className="flex flex-wrap items-center gap-2 text-sm font-bold text-[#2B2B2B]">
+                                                            {countryCodeToFlag(s.primaryCountry) && (
+                                                                <span aria-hidden="true" className="text-base leading-none">
+                                                                    {countryCodeToFlag(s.primaryCountry)}
+                                                                </span>
+                                                            )}
                                                             <span>{s.fullName || s.email}</span>
                                                             {!s.isActive && (
                                                                 <span className="text-xs text-[#A3363D]">· Suspendida</span>
@@ -1972,8 +2187,16 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                                         <p className="text-sm font-bold text-[#2B2B2B] mt-0.5">
                                                             {q.title}
                                                         </p>
-                                                        <p className="text-xs text-[#2B2B2B]/70">
-                                                            Por {q.authorName}
+                                                        <p className="text-xs text-[#2B2B2B]/70 flex flex-wrap items-center gap-1.5 tabular-nums">
+                                                            {countryCodeToFlag(q.countryCode) && (
+                                                                <span aria-hidden="true" className="text-sm leading-none">
+                                                                    {countryCodeToFlag(q.countryCode)}
+                                                                </span>
+                                                            )}
+                                                            <span>Por {q.authorName}</span>
+                                                            {q.createdAt && (
+                                                                <span>· {formatDateTime(q.createdAt)}</span>
+                                                            )}
                                                         </p>
                                                     </div>
 
@@ -2302,6 +2525,218 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                     </div>
                                 )}
                             </div>
+                        ) : activeTab === 'metrics' && adminRole === 'owner' ? (
+                            <div className="space-y-5">
+                                <div className="p-4 rounded-2xl bg-[#FBF5E6] border border-[#E5DAC0] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                    <div>
+                                        <h3 className="font-bold text-sm text-[#2B2B2B]">
+                                            Métricas de Aceptación, Uso y Participación
+                                        </h3>
+                                        <p className="text-xs text-[#2B2B2B]/75 mt-0.5">
+                                            Resumen en tiempo real para Organizadores (CEOs del aula): adopción de pases, acceso al aula virtual, alcance por país y horarios activos.
+                                        </p>
+                                    </div>
+                                    <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-[#3F6B45]/15 text-[#2E4F35] shrink-0 tabular-nums">
+                                        {activityLogs.length} eventos registrados
+                                    </span>
+                                </div>
+
+                                {/* 4 tarjetas KPI principales */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 tabular-nums">
+                                    <div className="p-4 rounded-2xl bg-[#FBF5E6] border border-[#E5DAC0] space-y-1">
+                                        <p className="text-[11px] font-bold uppercase tracking-wider text-[#3F6B45]">
+                                            Alumnas activadas
+                                        </p>
+                                        <p className="text-2xl font-extrabold text-[#2B2B2B]">
+                                            {metricsSummary.activatedStudents}/{metricsSummary.totalStudents}
+                                        </p>
+                                        <p className="text-xs text-[#2B2B2B]/75">
+                                            {metricsSummary.activationPct}% con pase activo · {metricsSummary.totalAuthorizedDevices} equipos
+                                        </p>
+                                    </div>
+
+                                    <div className="p-4 rounded-2xl bg-[#FBF5E6] border border-[#E5DAC0] space-y-1">
+                                        <p className="text-[11px] font-bold uppercase tracking-wider text-[#A3363D]">
+                                            Accesos a ClassOnLive
+                                        </p>
+                                        <p className="text-2xl font-extrabold text-[#2B2B2B]">
+                                            {metricsSummary.classroomClickCount}
+                                        </p>
+                                        <p className="text-xs text-[#2B2B2B]/75">
+                                            {metricsSummary.loginCount} inicios de sesión verificados
+                                        </p>
+                                    </div>
+
+                                    <div className="p-4 rounded-2xl bg-[#FBF5E6] border border-[#E5DAC0] space-y-1">
+                                        <p className="text-[11px] font-bold uppercase tracking-wider text-[#3F6B45]">
+                                            Resolución del Foro
+                                        </p>
+                                        <p className="text-2xl font-extrabold text-[#2B2B2B]">
+                                            {metricsSummary.forumResolutionPct}%
+                                        </p>
+                                        <p className="text-xs text-[#2B2B2B]/75">
+                                            {metricsSummary.answeredQuestions}/{metricsSummary.totalQuestions} resueltas · Resp. prom: {formatResponseDuration(metricsSummary.avgResponseMinutes)}
+                                        </p>
+                                    </div>
+
+                                    <div className="p-4 rounded-2xl bg-[#FBF5E6] border border-[#E5DAC0] space-y-1">
+                                        <p className="text-[11px] font-bold uppercase tracking-wider text-[#2E4F35]">
+                                            Avance en Talleres
+                                        </p>
+                                        <p className="text-2xl font-extrabold text-[#2B2B2B]">
+                                            {metricsSummary.avgClassesCompleted}/9
+                                        </p>
+                                        <p className="text-xs text-[#2B2B2B]/75">
+                                            {metricsSummary.totalCompletedChecks} clases marcadas vistas en total
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* Distribución por país y Franja horaria */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                    <div className="p-4 rounded-2xl bg-[#FBF5E6] border border-[#E5DAC0] space-y-3">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <h4 className="font-bold text-sm text-[#2B2B2B]">
+                                                Alcance por País (Bandera y participación)
+                                            </h4>
+                                            <span className="text-[11px] font-semibold text-[#2B2B2B]/65 tabular-nums">
+                                                {metricsSummary.countryRanking.length} {metricsSummary.countryRanking.length === 1 ? 'país' : 'países'}
+                                            </span>
+                                        </div>
+
+                                        {metricsSummary.countryRanking.length === 0 ? (
+                                            <p className="text-xs text-[#2B2B2B]/70 py-4 text-center bg-[#FFFDF7] rounded-xl border border-[#E5DAC0]">
+                                                Aún no hay ubicaciones registradas. Cuando las alumnas ingresen o publiquen en el foro desde Vercel/producción aparecerán sus banderas aquí.
+                                            </p>
+                                        ) : (
+                                            <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1 tabular-nums">
+                                                {metricsSummary.countryRanking.map((item) => (
+                                                    <div key={item.code} className="space-y-1">
+                                                        <div className="flex items-center justify-between gap-2 text-xs">
+                                                            <span className="inline-flex items-center gap-2 font-bold text-[#2B2B2B]">
+                                                                <span className="text-base leading-none">{item.flag}</span>
+                                                                <span>{item.name}</span>
+                                                            </span>
+                                                            <span className="text-[#2B2B2B]/75 font-semibold">
+                                                                {item.students > 0 ? `${item.students} alum.` : ''}
+                                                                {item.students > 0 && item.interactions > 0 ? ' · ' : ''}
+                                                                {item.interactions > 0 ? `${item.interactions} interv.` : ''} ({item.pct}%)
+                                                            </span>
+                                                        </div>
+                                                        <div className="w-full h-2 rounded-full bg-[#FFFDF7] border border-[#E5DAC0] overflow-hidden">
+                                                            <div
+                                                                className="h-full rounded-full bg-[#3F6B45]"
+                                                                style={{ width: `${Math.max(6, item.pct)}%` }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="p-4 rounded-2xl bg-[#FBF5E6] border border-[#E5DAC0] space-y-3">
+                                        <h4 className="font-bold text-sm text-[#2B2B2B]">
+                                            Horarios de Mayor Actividad
+                                        </h4>
+                                        <div className="space-y-2.5 tabular-nums">
+                                            {metricsSummary.timeSlots.map((slot) => {
+                                                const widthPct = Math.round((slot.count / metricsSummary.maxSlotCount) * 100);
+                                                return (
+                                                    <div key={slot.id} className="space-y-1">
+                                                        <div className="flex items-center justify-between text-xs">
+                                                            <span className="font-semibold text-[#2B2B2B]">
+                                                                {slot.label}
+                                                            </span>
+                                                            <span className="font-bold text-[#A3363D]">
+                                                                {slot.count} {slot.count === 1 ? 'acción' : 'acciones'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="w-full h-2 rounded-full bg-[#FFFDF7] border border-[#E5DAC0] overflow-hidden">
+                                                            <div
+                                                                className="h-full rounded-full bg-[#A3363D]"
+                                                                style={{ width: slot.count > 0 ? `${Math.max(6, widthPct)}%` : '0%' }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Interés por taller y Registro reciente */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                    <div className="p-4 rounded-2xl bg-[#FBF5E6] border border-[#E5DAC0] space-y-3">
+                                        <h4 className="font-bold text-sm text-[#2B2B2B]">
+                                            Interés y Avance por Taller
+                                        </h4>
+                                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1 tabular-nums">
+                                            {metricsSummary.workshopStats.map((w) => (
+                                                <div
+                                                    key={w.id}
+                                                    className="p-2.5 rounded-xl bg-[#FFFDF7] border border-[#E5DAC0] flex items-center justify-between gap-2 text-xs"
+                                                >
+                                                    <span className="font-bold text-[#2B2B2B] truncate">
+                                                        {w.title}
+                                                    </span>
+                                                    <span className="text-[11px] font-semibold text-[#3F6B45] shrink-0">
+                                                        {w.completedBy} vistas · {w.clicks} clics · {w.doubts} dudas
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="p-4 rounded-2xl bg-[#FBF5E6] border border-[#E5DAC0] space-y-3">
+                                        <h4 className="font-bold text-sm text-[#2B2B2B]">
+                                            Actividad Reciente (Fecha, Hora y Bandera)
+                                        </h4>
+                                        {activityLogs.length === 0 ? (
+                                            <p className="text-xs text-[#2B2B2B]/70 py-4 text-center bg-[#FFFDF7] rounded-xl border border-[#E5DAC0]">
+                                                Los accesos, clics a ClassOnLive y publicaciones en el foro se registrarán aquí con fecha, hora y bandera.
+                                            </p>
+                                        ) : (
+                                            <div className="space-y-2 max-h-64 overflow-y-auto pr-1 tabular-nums">
+                                                {activityLogs.slice(0, 25).map((log) => {
+                                                    const flag = countryCodeToFlag(log.countryCode);
+                                                    const workshopObj = log.workshopId
+                                                        ? classData.find((c) => c.id === log.workshopId)
+                                                        : undefined;
+                                                    return (
+                                                        <div
+                                                            key={log.id}
+                                                            className="p-2.5 rounded-xl bg-[#FFFDF7] border border-[#E5DAC0] flex items-start justify-between gap-2 text-xs"
+                                                        >
+                                                            <div className="min-w-0 space-y-0.5">
+                                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                                    <span aria-hidden="true" className="text-sm leading-none">
+                                                                        {flag || '🌐'}
+                                                                    </span>
+                                                                    <span className="font-bold text-[#2B2B2B] truncate">
+                                                                        {log.actorName || log.actorEmail || 'Participante'}
+                                                                    </span>
+                                                                    <span className="px-2 py-0.5 rounded-full bg-[#FBF5E6] border border-[#E5DAC0] text-[10px] font-bold text-[#3F6B45]">
+                                                                        {ACTIVITY_LABELS[log.eventType]}
+                                                                    </span>
+                                                                </div>
+                                                                {workshopObj && (
+                                                                    <p className="text-[11px] text-[#2B2B2B]/70 truncate">
+                                                                        {workshopObj.shortTitle || workshopObj.titulo}
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                            <span className="text-[11px] text-[#2B2B2B]/65 shrink-0">
+                                                                {formatDateTime(log.createdAt)}
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
                         ) : (
                             <div className="space-y-5">
                                 {pendingCollaborators.length > 0 && (
@@ -2370,7 +2805,7 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                     className="bg-[#FBF5E6] border border-[#E5DAC0] rounded-2xl p-4 md:p-5 space-y-3"
                                 >
                                     <h3 className="font-bold text-sm text-[#2B2B2B]">
-                                        Registrar miembro del equipo (Dueño/a, Soporte o Profesor/a)
+                                        Registrar miembro del equipo (Organizador/a, Soporte o Profesor/a)
                                     </h3>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                                         <input
@@ -2403,7 +2838,7 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                             onChange={(e) => setNewAdminRole(normalizeAdminRole(e.target.value))}
                                             className="px-3 py-2 rounded-xl bg-[#FFFDF7] border border-[#E5DAC0] text-xs sm:text-sm font-semibold text-[#2B2B2B]"
                                         >
-                                            <option value="owner">Dueño/a · Acceso total</option>
+                                            <option value="owner">Organizador/a · Acceso total</option>
                                             <option value="support">Soporte · Apoyo logístico</option>
                                             <option value="teacher">Profesor/a · Solo Foro</option>
                                         </select>
@@ -2458,7 +2893,7 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                                                 }`}
                                                             >
                                                                 {adm.role === 'owner'
-                                                                    ? 'Dueño/a · Total'
+                                                                    ? 'Organizador/a · Total'
                                                                     : adm.role === 'support'
                                                                       ? 'Soporte · Logístico'
                                                                       : 'Profesor/a · Foro'}
@@ -2489,7 +2924,7 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                                             }
                                                             className="px-2.5 py-1.5 rounded-full bg-[#FFFDF7] border border-[#E5DAC0] text-xs font-semibold text-[#2B2B2B] disabled:opacity-60"
                                                         >
-                                                            <option value="owner">Dueño/a · Total</option>
+                                                            <option value="owner">Organizador/a · Total</option>
                                                             <option value="support">Soporte · Logístico</option>
                                                             <option value="teacher">Profesor/a · Foro</option>
                                                         </select>
@@ -2523,7 +2958,7 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                                             )
                                                         ) : (
                                                             <span className="text-[11px] font-semibold text-[#2B2B2B]/60">
-                                                                Único dueño activo
+                                                                Único organizador activo
                                                             </span>
                                                         )}
                                                     </div>

@@ -1,6 +1,8 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 import type {
     AccessVerificationResult,
+    ActivityEventType,
+    ActivityLogEntry,
     AdminApprovalStatus,
     AdminRole,
     AdminStudentRecord,
@@ -51,6 +53,7 @@ interface LocalDbState {
     students: LocalStudentEntry[];
     alerts: DeviceAccessAlert[];
     recordings?: RecordingStatusMap;
+    activityLogs?: ActivityLogEntry[];
 }
 
 export const getOrCreateDeviceId = (): string => {
@@ -180,6 +183,7 @@ const normalizeLocalDb = (raw: LocalDbState): {
     students: LocalStudentEntry[];
     alerts: DeviceAccessAlert[];
     recordings: RecordingStatusMap;
+    activityLogs: ActivityLogEntry[];
 } => {
     const admins: LocalAdminEntry[] = Array.isArray(raw.admins)
         ? raw.admins.map((a) => ({
@@ -275,6 +279,7 @@ const normalizeLocalDb = (raw: LocalDbState): {
     const alerts: DeviceAccessAlert[] = Array.isArray(raw.alerts) ? raw.alerts : [];
     const recordings: RecordingStatusMap =
         raw.recordings && typeof raw.recordings === 'object' ? { ...raw.recordings } : {};
+    const activityLogs: ActivityLogEntry[] = Array.isArray(raw.activityLogs) ? raw.activityLogs : [];
     return {
         admin: raw.admin ?? null,
         admins,
@@ -284,6 +289,7 @@ const normalizeLocalDb = (raw: LocalDbState): {
         students,
         alerts,
         recordings,
+        activityLogs,
     };
 };
 
@@ -305,6 +311,7 @@ const readLocalDb = () => {
         students: [],
         alerts: [],
         recordings: {},
+        activityLogs: [],
     });
 };
 
@@ -323,6 +330,66 @@ const writeLocalDb = (db: ReturnType<typeof normalizeLocalDb>): void => {
         // Ignore
     }
 };
+
+export const appendLocalActivityLog = (params: {
+    eventType: ActivityEventType;
+    actorEmail?: string;
+    actorName?: string;
+    workshopId?: string;
+    countryCode?: string;
+    createdAt?: string;
+}): void => {
+    const db = readLocalDb();
+    db.activityLogs.unshift({
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        eventType: params.eventType,
+        actorEmail: params.actorEmail?.trim().toLowerCase() || undefined,
+        actorName: params.actorName?.trim() || undefined,
+        workshopId: params.workshopId?.trim() || undefined,
+        countryCode: params.countryCode?.trim().toUpperCase() || undefined,
+        createdAt: params.createdAt || new Date().toISOString(),
+    });
+    if (db.activityLogs.length > 500) {
+        db.activityLogs = db.activityLogs.slice(0, 500);
+    }
+    writeLocalDb(db);
+};
+
+export async function logStudentActivity(params: {
+    email: string;
+    actorName?: string;
+    eventType: ActivityEventType;
+    workshopId?: string;
+    countryOverride?: string;
+}): Promise<void> {
+    const cleanEmail = params.email.trim().toLowerCase();
+    if (!cleanEmail) return;
+
+    if (isSupabaseConfigured) {
+        try {
+            await postJson('/api/verify-access', {
+                action: 'log_activity',
+                email: cleanEmail,
+                actorName: (params.actorName || '').trim(),
+                eventType: params.eventType,
+                workshopId: params.workshopId || '',
+            });
+        } catch {
+            // Registro silencioso para no interrumpir la navegación
+        }
+        return;
+    }
+
+    const db = readLocalDb();
+    const matchedStudent = db.students.find((s) => s.email.toLowerCase() === cleanEmail);
+    appendLocalActivityLog({
+        eventType: params.eventType,
+        actorEmail: cleanEmail,
+        actorName: params.actorName || matchedStudent?.fullName || '',
+        workshopId: params.workshopId || '',
+        countryCode: params.countryOverride || matchedStudent?.primaryCountry || '',
+    });
+}
 
 export const hasLocalAdminConfigured = (): boolean => {
     return readLocalDb().admins.some((a) => a.isActive && a.approvalStatus === 'approved');
@@ -554,6 +621,7 @@ export async function verifyStudentAccess(params: {
     deviceIdOverride?: string;
     countryOverride?: string;
     ipOverride?: string;
+    skipLog?: boolean;
 }): Promise<AccessVerificationResult> {
     const deviceId = params.deviceIdOverride || getOrCreateDeviceId();
     const deviceLabel = getDeviceLabel();
@@ -570,6 +638,7 @@ export async function verifyStudentAccess(params: {
                 purchaseCode: rawCredential,
                 deviceId,
                 deviceLabel,
+                skipLog: params.skipLog === true,
             }
         );
 
@@ -799,6 +868,19 @@ export async function verifyStudentAccess(params: {
 
         student.authorizedDevicesCount = student.devices.filter((d) => d.isAuthorized).length;
         student.totalDevicesCount = student.devices.length;
+        if (!params.skipLog) {
+            db.activityLogs.unshift({
+                id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                eventType: 'student_login',
+                actorEmail: student.email,
+                actorName: student.fullName || undefined,
+                countryCode: (student.primaryCountry || simulatedCountry || '').toUpperCase() || undefined,
+                createdAt: new Date().toISOString(),
+            });
+            if (db.activityLogs.length > 500) {
+                db.activityLogs = db.activityLogs.slice(0, 500);
+            }
+        }
         writeLocalDb(db);
 
         const session: VerifiedStudentSession = {
@@ -990,7 +1072,7 @@ export async function verifyAdminAccess(params: {
             return {
                 ok: false,
                 pendingApproval: true,
-                message: 'Tu solicitud de colaboradora aún está pendiente de aprobación por un dueño de la feria.',
+                message: 'Tu solicitud de colaboradora aún está pendiente de aprobación por un organizador de la feria.',
             };
         }
         if (!matched.mustChangePassword) {
@@ -1014,7 +1096,7 @@ export async function verifyAdminAccess(params: {
     return {
         ok: false,
         message:
-            'Correo o clave de acceso incorrectos. Si eres dueño/a con clave temporal (1234) o colaboradora aprobada, verifica tus datos.',
+            'Correo o clave de acceso incorrectos. Si eres organizador/a con clave temporal (1234) o colaboradora aprobada, verifica tus datos.',
     };
 }
 
@@ -1139,7 +1221,7 @@ export async function registerAdminAccount(params: {
             return {
                 ok: false,
                 message:
-                    'Solo un dueño de la feria activo puede registrar nuevos administradores o profesores. Si ingresas con clave temporal (1234), usa "Iniciar sesión".',
+                    'Solo un organizador de la feria activo puede registrar nuevos administradores o profesores. Si ingresas con clave temporal (1234), usa "Iniciar sesión".',
             };
         }
     }
@@ -1224,7 +1306,7 @@ export async function requestCollaboratorAccess(params: {
         return {
             ok: true,
             pending: true,
-            message: 'Actualizamos tu solicitud de colaboradora. Queda pendiente de aprobación por un dueño de la feria.',
+            message: 'Actualizamos tu solicitud de colaboradora. Queda pendiente de aprobación por un organizador de la feria.',
         };
     }
 
@@ -1244,7 +1326,7 @@ export async function requestCollaboratorAccess(params: {
     return {
         ok: true,
         pending: true,
-        message: '¡Solicitud enviada! Un dueño de la feria aprobará tu perfil para que puedas responder dudas en el foro.',
+        message: '¡Solicitud enviada! Un organizador de la feria aprobará tu perfil para que puedas responder dudas en el foro.',
     };
 }
 
@@ -1268,7 +1350,7 @@ export async function reviewCollaboratorRequest(params: {
     if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireOwner: true })) {
         return {
             ok: false,
-            message: 'Solo los dueños de la feria pueden aprobar o rechazar colaboradoras.',
+            message: 'Solo los organizadores de la feria pueden aprobar o rechazar colaboradoras.',
         };
     }
 
@@ -1303,7 +1385,7 @@ export async function deleteAdminAccount(params: {
 
     const db = readLocalDb();
     if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireOwner: true })) {
-        return { ok: false, message: 'Solo los dueños de la feria pueden eliminar cuentas administrativas.' };
+        return { ok: false, message: 'Solo los organizadores de la feria pueden eliminar cuentas administrativas.' };
     }
 
     const target = db.admins.find((a) => a.id === params.targetAdminId);
@@ -1324,7 +1406,7 @@ export async function deleteAdminAccount(params: {
         if (remainingOwners < 1) {
             return {
                 ok: false,
-                message: 'Debe quedar al menos un dueño activo en la plataforma antes de eliminar este perfil.',
+                message: 'Debe quedar al menos un organizador activo en la plataforma antes de eliminar este perfil.',
             };
         }
     }
@@ -1383,7 +1465,7 @@ export async function toggleWorkshopRecording(params: {
 
     const db = readLocalDb();
     if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireSupportOrOwner: true })) {
-        return { ok: false, message: 'Solo dueños o soporte pueden actualizar el estado de grabaciones.' };
+        return { ok: false, message: 'Solo organizadores o soporte pueden actualizar el estado de grabaciones.' };
     }
 
     db.recordings[cleanId] = Boolean(params.isReady);
@@ -1412,7 +1494,7 @@ export async function updateAdminRole(params: {
 
     const db = readLocalDb();
     if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireOwner: true })) {
-        return { ok: false, message: 'Solo los dueños de la feria pueden cambiar roles administrativos.' };
+        return { ok: false, message: 'Solo los organizadores de la feria pueden cambiar roles administrativos.' };
     }
 
     const target = db.admins.find((a) => a.id === params.targetAdminId);
@@ -1432,7 +1514,7 @@ export async function updateAdminRole(params: {
         if (remainingOwners < 1) {
             return {
                 ok: false,
-                message: 'Debe quedar al menos un dueño activo en la plataforma antes de cambiar este rol.',
+                message: 'Debe quedar al menos un organizador activo en la plataforma antes de cambiar este rol.',
             };
         }
     }
@@ -1453,6 +1535,7 @@ export async function fetchAdminDashboard(params: {
     alerts?: DeviceAccessAlert[];
     admins?: AdminUserSummary[];
     recordings?: RecordingStatusMap;
+    activityLogs?: ActivityLogEntry[];
     message?: string;
 }> {
     if (isSupabaseConfigured) {
@@ -1478,6 +1561,7 @@ export async function fetchAdminDashboard(params: {
             alerts: [],
             admins: [],
             recordings: {},
+            activityLogs: [],
         };
     }
 
@@ -1490,6 +1574,7 @@ export async function fetchAdminDashboard(params: {
             alerts: db.alerts,
             admins: [],
             recordings: db.recordings,
+            activityLogs: [],
         };
     }
 
@@ -1512,6 +1597,7 @@ export async function fetchAdminDashboard(params: {
         alerts: db.alerts,
         admins: adminsSummary,
         recordings: db.recordings,
+        activityLogs: db.activityLogs,
     };
 }
 
@@ -1535,7 +1621,7 @@ export async function upsertAdminStudent(params: {
 
     const db = readLocalDb();
     if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireSupportOrOwner: true })) {
-        return { ok: false, message: 'Solo dueños o soporte pueden registrar o modificar alumnas.' };
+        return { ok: false, message: 'Solo organizadores o soporte pueden registrar o modificar alumnas.' };
     }
 
     const cleanEmail = params.email.trim().toLowerCase();
@@ -1617,7 +1703,7 @@ export async function bulkUpsertAdminStudents(params: {
 
     const db = readLocalDb();
     if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireSupportOrOwner: true })) {
-        return { ok: false, message: 'Solo dueños o soporte pueden subir listados CSV / XLSX.' };
+        return { ok: false, message: 'Solo organizadores o soporte pueden subir listados CSV / XLSX.' };
     }
 
     let count = 0;
@@ -1683,7 +1769,7 @@ export async function resetAdminStudentDevices(params: {
 
     const db = readLocalDb();
     if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireSupportOrOwner: true })) {
-        return { ok: false, message: 'Solo dueños o soporte pueden restablecer dispositivos.' };
+        return { ok: false, message: 'Solo organizadores o soporte pueden restablecer dispositivos.' };
     }
 
     const student = db.students.find((s) => s.id === params.studentId);
@@ -1715,7 +1801,7 @@ export async function deleteAdminStudent(params: {
 
     const db = readLocalDb();
     if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireOwner: true })) {
-        return { ok: false, message: 'Solo los dueños de la feria pueden eliminar alumnas.' };
+        return { ok: false, message: 'Solo los organizadores de la feria pueden eliminar alumnas.' };
     }
 
     db.students = db.students.filter((s) => s.id !== params.studentId);

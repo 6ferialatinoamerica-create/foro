@@ -2,6 +2,7 @@ interface ApiRequest {
     method?: string;
     headers: Record<string, string | string[] | undefined>;
     body?: unknown;
+    socket?: { remoteAddress?: string };
     on?: (event: string, listener: (chunk: Buffer | string) => void) => void;
 }
 
@@ -11,6 +12,19 @@ interface ApiResponse {
     setHeader: (name: string, value: string) => void;
     end: (body?: string) => void;
 }
+
+const getHeader = (headers: ApiRequest['headers'], name: string): string => {
+    const raw = headers[name.toLowerCase()];
+    if (Array.isArray(raw)) return raw[0] || '';
+    return raw || '';
+};
+
+const extractCountryFromHeaders = (req: ApiRequest): string => {
+    const raw =
+        getHeader(req.headers, 'x-vercel-ip-country').trim().toUpperCase() ||
+        getHeader(req.headers, 'cf-ipcountry').trim().toUpperCase();
+    return /^[A-Z]{2}$/.test(raw) ? raw : '';
+};
 
 const readJsonBody = async (req: ApiRequest): Promise<Record<string, unknown>> => {
     if (req.body && typeof req.body === 'object') {
@@ -200,6 +214,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
                 p_question_id: String(body.questionId || ''),
                 p_teacher_name: String(body.teacherName || ''),
                 p_reply_body: String(body.replyBody || ''),
+                p_country_code: extractCountryFromHeaders(req),
             };
             break;
         case 'delete_forum_question':

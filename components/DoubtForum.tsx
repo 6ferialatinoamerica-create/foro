@@ -7,6 +7,7 @@ import {
     fetchForumQuestions,
 } from '../services/forumService';
 import { matchesTextQuery } from '../utils/workshopSearch';
+import { countryCodeToFlag } from '../utils/countryFlag';
 
 interface DoubtForumProps {
     classes: Clase[];
@@ -22,11 +23,16 @@ interface DoubtForumProps {
 const formatForumDate = (isoString: string): string => {
     const d = new Date(isoString);
     if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('es-ES', {
+    const dateStr = d.toLocaleDateString('es-ES', {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
     });
+    const timeStr = d.toLocaleTimeString('es-ES', {
+        hour: 'numeric',
+        minute: '2-digit',
+    });
+    return `${dateStr} · ${timeStr}`;
 };
 
 const DoubtForum: React.FC<DoubtForumProps> = ({
@@ -65,7 +71,7 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
     const [formError, setFormError] = useState<string | null>(null);
     const [formSuccess, setFormSuccess] = useState<string | null>(null);
 
-    // Respuesta en el hilo (Oficial si hay sesión de Dueño/Colaboradora, o comentario de Alumna)
+    // Respuesta en el hilo (Oficial si hay sesión de Organizador/Colaboradora, o comentario de Alumna)
     const [replyingToId, setReplyingToId] = useState<string | null>(null);
     const [replyAuthor, setReplyAuthor] = useState(
         adminSession?.displayName || studentSession?.fullName || ''
@@ -398,13 +404,21 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                             <div className="flex flex-wrap items-start justify-between gap-2">
                                 <div className="space-y-1">
                                     <div className="flex flex-wrap items-center gap-2">
+                                        {countryCodeToFlag(q.countryCode) && (
+                                            <span
+                                                aria-hidden="true"
+                                                className="text-base leading-none shrink-0"
+                                            >
+                                                {countryCodeToFlag(q.countryCode)}
+                                            </span>
+                                        )}
                                         <span className="font-bold text-sm text-[#2B2B2B] uppercase tracking-wide">
                                             {q.authorName}
                                         </span>
                                         <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#FFFDF7] border border-[#E5DAC0] text-[#2B2B2B]/75">
                                             Alumna
                                         </span>
-                                        <span className="text-xs text-[#2B2B2B]/60">
+                                        <span className="text-xs text-[#2B2B2B]/60 tabular-nums">
                                             {formatForumDate(q.createdAt)}
                                         </span>
                                     </div>
@@ -448,10 +462,15 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                                                 className="rounded-xl bg-[#FFFDF7] border-l-4 border-l-[#3F6B45] border border-[#E5DAC0] p-3.5 space-y-1"
                                             >
                                                 <div className="flex flex-wrap items-center justify-between gap-2">
-                                                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#3F6B45]">
-                                                        ✓ Respuesta oficial · {reply.authorName}
+                                                    <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-[#3F6B45]">
+                                                        {countryCodeToFlag(reply.countryCode) && (
+                                                            <span aria-hidden="true" className="text-sm leading-none">
+                                                                {countryCodeToFlag(reply.countryCode)}
+                                                            </span>
+                                                        )}
+                                                        <span>✓ Respuesta oficial · {reply.authorName}</span>
                                                     </span>
-                                                    <span className="text-[11px] text-[#2B2B2B]/55">
+                                                    <span className="text-[11px] text-[#2B2B2B]/55 tabular-nums">
                                                         {formatForumDate(reply.createdAt)}
                                                     </span>
                                                 </div>
@@ -465,10 +484,15 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                                                 className="rounded-xl bg-[#FFFDF7]/75 border border-[#E5DAC0] p-3 space-y-1 ml-2 sm:ml-4"
                                             >
                                                 <div className="flex items-center justify-between gap-2 text-[11px]">
-                                                    <span className="font-bold text-[#2B2B2B]">
-                                                        {reply.authorName} · Alumna
+                                                    <span className="inline-flex items-center gap-1.5 font-bold text-[#2B2B2B]">
+                                                        {countryCodeToFlag(reply.countryCode) && (
+                                                            <span aria-hidden="true" className="text-sm leading-none">
+                                                                {countryCodeToFlag(reply.countryCode)}
+                                                            </span>
+                                                        )}
+                                                        <span>{reply.authorName} · Alumna</span>
                                                     </span>
-                                                    <span className="text-[#2B2B2B]/55">
+                                                    <span className="text-[#2B2B2B]/55 tabular-nums">
                                                         {formatForumDate(reply.createdAt)}
                                                     </span>
                                                 </div>
@@ -499,7 +523,7 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                                                     ? 'Colaboradora'
                                                     : adminSession.role === 'support'
                                                       ? 'Soporte'
-                                                      : 'Dueño/a'
+                                                      : 'Organizador/a'
                                             } (${q.replies.length})`
                                           : `Comentar en el hilo (${q.replies.length})`}
                                 </button>
@@ -517,7 +541,7 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                                                 ? 'Colaboradora'
                                                 : adminSession.role === 'support'
                                                   ? 'Soporte'
-                                                  : 'Dueño/a'}
+                                                  : 'Organizador/a'}
                                             ): se publicará como{' '}
                                             <span className="underline">Respuesta oficial</span> y marcará la duda como resuelta.
                                         </div>

@@ -163,6 +163,34 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
             p_device_id: String(body.deviceId || ''),
             p_completed_class_ids: Array.isArray(body.completedClassIds) ? body.completedClassIds : [],
         };
+    } else if (action === 'log_activity') {
+        rpcName = 'log_student_activity';
+        rpcPayload = {
+            p_email: String(body.email || ''),
+            p_actor_name: String(body.actorName || ''),
+            p_event_type: String(body.eventType || 'classroom_click'),
+            p_workshop_id: String(body.workshopId || ''),
+            p_country_code: geo.country,
+        };
+    } else if (action === 'create_forum_question') {
+        rpcName = 'create_forum_question';
+        rpcPayload = {
+            p_workshop_id: String(body.workshopId || 'general'),
+            p_workshop_title: String(body.workshopTitle || 'Consulta general'),
+            p_author_name: String(body.authorName || ''),
+            p_author_email: String(body.authorEmail || ''),
+            p_title: String(body.title || ''),
+            p_body: String(body.body || ''),
+            p_country_code: geo.country,
+        };
+    } else if (action === 'add_student_forum_reply') {
+        rpcName = 'add_student_forum_reply';
+        rpcPayload = {
+            p_question_id: String(body.questionId || ''),
+            p_author_name: String(body.authorName || ''),
+            p_body: String(body.body || ''),
+            p_country_code: geo.country,
+        };
     } else {
         rpcPayload = {
             p_email: String(body.email || ''),
@@ -172,6 +200,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
             p_ip_address: geo.ip,
             p_country_code: geo.country,
             p_city: geo.city,
+            p_log_event: body.skipLog !== true,
         };
     }
 

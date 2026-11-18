@@ -145,6 +145,22 @@ export interface SavedAdminCredentials {
     remember: boolean;
 }
 
+export type ActivityEventType =
+    | 'student_login'
+    | 'classroom_click'
+    | 'forum_question'
+    | 'forum_reply';
+
+export interface ActivityLogEntry {
+    id: string;
+    eventType: ActivityEventType;
+    actorEmail?: string;
+    actorName?: string;
+    workshopId?: string;
+    countryCode?: string;
+    createdAt: string;
+}
+
 export type ForumQuestionStatus = 'pending' | 'answered';
 
 export interface ForumReply {
@@ -154,6 +170,7 @@ export interface ForumReply {
     authorRole: 'student' | 'teacher';
     authorAdminId?: string;
     authorEmail?: string;
+    countryCode?: string;
     body: string;
     isOfficial: boolean;
     createdAt: string;
@@ -164,6 +181,7 @@ export interface ForumQuestion {
     workshopId: string;
     workshopTitle: string;
     authorName: string;
+    countryCode?: string;
     title: string;
     body: string;
     status: ForumQuestionStatus;

@@ -151,6 +151,19 @@ create table if not exists public.workshop_recordings (
     updated_at timestamptz not null default now()
 );
 
+create table if not exists public.app_activity_logs (
+    id uuid primary key default gen_random_uuid(),
+    event_type text not null check (event_type in ('student_login', 'classroom_click', 'forum_question', 'forum_reply')),
+    actor_email text not null default '',
+    actor_name text not null default '',
+    workshop_id text not null default '',
+    country_code text not null default '',
+    created_at timestamptz not null default now()
+);
+
+create index if not exists idx_app_activity_logs_created
+    on public.app_activity_logs (created_at desc);
+
 -- Seguridad estricta: ninguna tabla sensible se lee ni escribe directamente desde el cliente.
 -- Todo acceso ocurre mediante funciones RPC SECURITY DEFINER (salvo lectura pública del estado de grabaciones).
 alter table public.enrolled_students enable row level security;
@@ -158,6 +171,7 @@ alter table public.student_devices enable row level security;
 alter table public.device_access_alerts enable row level security;
 alter table public.admin_users enable row level security;
 alter table public.workshop_recordings enable row level security;
+alter table public.app_activity_logs enable row level security;
 
 drop policy if exists "Public can read workshop recordings" on public.workshop_recordings;
 create policy "Public can read workshop recordings"
@@ -307,10 +321,14 @@ begin
         p_device_label,
         p_ip_address,
         p_country_code,
-        p_city
+        p_city,
+        true
     );
 end;
 $$;
+
+drop function if exists public.verify_student_access(text, text, text, text, text, text, text);
+
 create or replace function public.verify_student_access(
     p_email text,
     p_purchase_code text,
@@ -318,7 +336,8 @@ create or replace function public.verify_student_access(
     p_device_label text default 'Dispositivo',
     p_ip_address text default '',
     p_country_code text default '',
-    p_city text default ''
+    p_city text default '',
+    p_log_event boolean default true
 )
 returns jsonb
 language plpgsql
@@ -547,6 +566,16 @@ begin
             last_seen_at = now()
         where id = v_device.id;
 
+        if coalesce(p_log_event, true) then
+            insert into public.app_activity_logs (event_type, actor_email, actor_name, country_code)
+            values (
+                'student_login',
+                v_student.email,
+                v_student.full_name,
+                coalesce(nullif(v_country, ''), coalesce(v_student.primary_country, ''))
+            );
+        end if;
+
         return jsonb_build_object(
             'ok', true,
             'status', 'VERIFIED',
@@ -581,6 +610,16 @@ begin
             city = excluded.city,
             is_authorized = true,
             last_seen_at = now();
+
+        if coalesce(p_log_event, true) then
+            insert into public.app_activity_logs (event_type, actor_email, actor_name, country_code)
+            values (
+                'student_login',
+                v_student.email,
+                v_student.full_name,
+                coalesce(nullif(v_country, ''), coalesce(v_student.primary_country, ''))
+            );
+        end if;
 
         return jsonb_build_object(
             'ok', true,
@@ -762,6 +801,39 @@ begin
 end;
 $$;
 
+create or replace function public.log_student_activity(
+    p_email text default '',
+    p_actor_name text default '',
+    p_event_type text default 'classroom_click',
+    p_workshop_id text default '',
+    p_country_code text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+    v_event text := trim(coalesce(p_event_type, 'classroom_click'));
+    v_country text := upper(left(trim(coalesce(p_country_code, '')), 8));
+begin
+    if v_event not in ('student_login', 'classroom_click') then
+        return jsonb_build_object('ok', false, 'message', 'Tipo de evento no válido.');
+    end if;
+
+    insert into public.app_activity_logs (event_type, actor_email, actor_name, workshop_id, country_code)
+    values (
+        v_event,
+        lower(left(trim(coalesce(p_email, '')), 160)),
+        left(trim(coalesce(p_actor_name, '')), 150),
+        left(trim(coalesce(p_workshop_id, '')), 64),
+        v_country
+    );
+
+    return jsonb_build_object('ok', true);
+end;
+$$;
+
 -- =====================================================================
 -- 4. FUNCIONES RPC PARA EL PANEL DE ADMINISTRADOR (ROLES Y CLAVE TEMPORAL)
 -- =====================================================================
@@ -903,7 +975,7 @@ begin
     if not found or v_user.access_key_hash <> extensions.crypt(v_key, v_user.access_key_hash) then
         return jsonb_build_object(
             'ok', false,
-            'message', 'Correo o clave de acceso incorrectos. Si eres dueño/a con clave temporal o colaboradora aprobada, verifica tus datos.'
+            'message', 'Correo o clave de acceso incorrectos. Si eres organizador/a con clave temporal o colaboradora aprobada, verifica tus datos.'
         );
     end if;
 
@@ -911,7 +983,7 @@ begin
         return jsonb_build_object(
             'ok', false,
             'pendingApproval', true,
-            'message', 'Tu solicitud de colaboradora aún está pendiente de aprobación por un dueño de la feria.'
+            'message', 'Tu solicitud de colaboradora aún está pendiente de aprobación por un organizador de la feria.'
         );
     end if;
 
@@ -1032,12 +1104,12 @@ begin
           and access_key_hash = extensions.crypt('CAMBIA-ESTA-CLAVE-SEGURA', access_key_hash)
       );
 
-    -- Si ya existe al menos un dueño activo, requiere autorización de un dueño vigente
+    -- Si ya existe al menos un organizador activo, requiere autorización de un organizador vigente
     if v_real_admins_count > 0 then
         if not public.is_valid_owner_admin(v_req_email, v_req_key) then
             return jsonb_build_object(
                 'ok', false,
-                'message', 'Solo un dueño de la feria activo puede registrar nuevos administradores o profesores. Si ingresas con clave temporal (1234), usa "Iniciar sesión".'
+                'message', 'Solo un organizador de la feria activo puede registrar nuevos administradores o profesores. Si ingresas con clave temporal (1234), usa "Iniciar sesión".'
             );
         end if;
     else
@@ -1128,7 +1200,7 @@ begin
         return jsonb_build_object(
             'ok', true,
             'pending', true,
-            'message', 'Actualizamos tu solicitud de colaboradora. Queda pendiente de aprobación por un dueño de la feria.'
+            'message', 'Actualizamos tu solicitud de colaboradora. Queda pendiente de aprobación por un organizador de la feria.'
         );
     end if;
 
@@ -1147,7 +1219,7 @@ begin
     return jsonb_build_object(
         'ok', true,
         'pending', true,
-        'message', '¡Solicitud enviada! Un dueño de la feria aprobará tu perfil para que puedas responder dudas en el foro.'
+        'message', '¡Solicitud enviada! Un organizador de la feria aprobará tu perfil para que puedas responder dudas en el foro.'
     );
 end;
 $$;
@@ -1165,7 +1237,7 @@ set search_path = public, extensions
 as $$
 begin
     if not public.is_valid_owner_admin(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo los dueños de la feria pueden aprobar o rechazar colaboradoras.');
+        return jsonb_build_object('ok', false, 'message', 'Solo los organizadores de la feria pueden aprobar o rechazar colaboradoras.');
     end if;
 
     if coalesce(p_approve, false) then
@@ -1199,7 +1271,7 @@ declare
     v_is_self boolean := false;
 begin
     if not public.is_valid_owner_admin(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo los dueños de la feria pueden eliminar cuentas administrativas.');
+        return jsonb_build_object('ok', false, 'message', 'Solo los organizadores de la feria pueden eliminar cuentas administrativas.');
     end if;
 
     select * into v_target
@@ -1223,7 +1295,7 @@ begin
         if v_remaining_owners < 1 then
             return jsonb_build_object(
                 'ok', false,
-                'message', 'Debe quedar al menos un dueño activo en la plataforma antes de eliminar este perfil.'
+                'message', 'Debe quedar al menos un organizador activo en la plataforma antes de eliminar este perfil.'
             );
         end if;
     end if;
@@ -1254,7 +1326,7 @@ declare
     v_remaining_owners integer := 0;
 begin
     if not public.is_valid_owner_admin(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo los dueños de la feria pueden cambiar roles administrativos.');
+        return jsonb_build_object('ok', false, 'message', 'Solo los organizadores de la feria pueden cambiar roles administrativos.');
     end if;
 
     select * into v_target
@@ -1276,7 +1348,7 @@ begin
         if v_remaining_owners < 1 then
             return jsonb_build_object(
                 'ok', false,
-                'message', 'Debe quedar al menos un dueño activo en la plataforma antes de cambiar este rol.'
+                'message', 'Debe quedar al menos un organizador activo en la plataforma antes de cambiar este rol.'
             );
         end if;
     end if;
@@ -1306,7 +1378,7 @@ declare
     v_ready boolean := coalesce(p_is_ready, false);
 begin
     if not public.is_valid_support_or_owner(v_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo dueños o soporte pueden actualizar el estado de grabaciones.');
+        return jsonb_build_object('ok', false, 'message', 'Solo organizadores o soporte pueden actualizar el estado de grabaciones.');
     end if;
 
     if v_workshop_id = '' then
@@ -1341,6 +1413,7 @@ declare
     v_alerts jsonb := '[]'::jsonb;
     v_admins jsonb := '[]'::jsonb;
     v_recordings jsonb := '{}'::jsonb;
+    v_activity_logs jsonb := '[]'::jsonb;
 begin
     if not public.is_valid_admin(v_email, p_access_key) then
         return jsonb_build_object('ok', false, 'message', 'Acceso no autorizado o pendiente cambio de clave temporal.');
@@ -1418,6 +1491,22 @@ begin
             from public.admin_users u
             where u.is_active = true
         ) adm_data;
+
+        select coalesce(jsonb_agg(row_to_json(log_data) order by log_data."createdAt" desc), '[]'::jsonb)
+        into v_activity_logs
+        from (
+            select
+                l.id,
+                l.event_type as "eventType",
+                l.actor_email as "actorEmail",
+                l.actor_name as "actorName",
+                l.workshop_id as "workshopId",
+                l.country_code as "countryCode",
+                l.created_at as "createdAt"
+            from public.app_activity_logs l
+            order by l.created_at desc
+            limit 500
+        ) log_data;
     end if;
 
     return jsonb_build_object(
@@ -1427,7 +1516,8 @@ begin
         'students', v_students,
         'alerts', v_alerts,
         'admins', v_admins,
-        'recordings', v_recordings
+        'recordings', v_recordings,
+        'activityLogs', v_activity_logs
     );
 end;
 $$;
@@ -1457,7 +1547,7 @@ declare
     v_needs_setup boolean := (v_effective_code = '' and v_effective_pass = '');
 begin
     if not public.is_valid_support_or_owner(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo dueños o soporte pueden registrar o modificar alumnas.');
+        return jsonb_build_object('ok', false, 'message', 'Solo organizadores o soporte pueden registrar o modificar alumnas.');
     end if;
 
     if v_email = '' or position('@' in v_email) = 0 then
@@ -1505,7 +1595,7 @@ set search_path = public, extensions
 as $$
 begin
     if not public.is_valid_support_or_owner(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo dueños o soporte pueden restablecer dispositivos.');
+        return jsonb_build_object('ok', false, 'message', 'Solo organizadores o soporte pueden restablecer dispositivos.');
     end if;
 
     delete from public.student_devices where student_id = p_student_id;
@@ -1536,7 +1626,7 @@ set search_path = public, extensions
 as $$
 begin
     if not public.is_valid_owner_admin(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo los dueños de la feria pueden eliminar alumnas.');
+        return jsonb_build_object('ok', false, 'message', 'Solo los organizadores de la feria pueden eliminar alumnas.');
     end if;
 
     delete from public.enrolled_students where id = p_student_id;
@@ -1565,7 +1655,7 @@ declare
     v_imported integer := 0;
 begin
     if not public.is_valid_support_or_owner(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo dueños o soporte pueden subir listados CSV / XLSX.');
+        return jsonb_build_object('ok', false, 'message', 'Solo organizadores o soporte pueden subir listados CSV / XLSX.');
     end if;
 
     if p_students is null or jsonb_typeof(p_students) <> 'array' then
@@ -1619,9 +1709,10 @@ $$;
 
 grant execute on function public.check_student_email(text) to anon, authenticated;
 grant execute on function public.activate_student_access(text, text, text, text, text, text, text, text) to anon, authenticated;
-grant execute on function public.verify_student_access(text, text, text, text, text, text, text) to anon, authenticated;
+grant execute on function public.verify_student_access(text, text, text, text, text, text, text, boolean) to anon, authenticated;
 grant execute on function public.save_student_classroom_credentials(text, text, text, text) to anon, authenticated;
 grant execute on function public.save_student_progress(text, text, text, jsonb) to anon, authenticated;
+grant execute on function public.log_student_activity(text, text, text, text, text) to anon, authenticated;
 grant execute on function public.verify_admin_access(text, text) to anon, authenticated;
 grant execute on function public.admin_change_password(text, text, text) to anon, authenticated;
 grant execute on function public.admin_register_user(text, text, text, text, text, text, boolean) to anon, authenticated;
@@ -1645,11 +1736,15 @@ create table if not exists public.forum_questions (
     workshop_title text not null default 'Consulta general',
     author_name text not null check (char_length(trim(author_name)) between 1 and 120),
     author_email text not null default '',
+    country_code text not null default '',
     title text not null check (char_length(trim(title)) between 1 and 200),
     body text not null default '' check (char_length(body) <= 2000),
     status text not null default 'pending' check (status in ('pending', 'answered')),
     created_at timestamptz not null default now()
 );
+
+alter table public.forum_questions
+    add column if not exists country_code text not null default '';
 
 create index if not exists idx_forum_questions_created
     on public.forum_questions (created_at desc);
@@ -1661,6 +1756,7 @@ create table if not exists public.forum_replies (
     author_role text not null default 'student' check (author_role in ('student', 'teacher')),
     author_admin_id uuid,
     author_email text not null default '',
+    country_code text not null default '',
     body text not null check (char_length(trim(body)) between 1 and 2000),
     is_official boolean not null default false,
     created_at timestamptz not null default now()
@@ -1668,7 +1764,8 @@ create table if not exists public.forum_replies (
 
 alter table public.forum_replies
     add column if not exists author_admin_id uuid,
-    add column if not exists author_email text not null default '';
+    add column if not exists author_email text not null default '',
+    add column if not exists country_code text not null default '';
 
 create index if not exists idx_forum_replies_question
     on public.forum_replies (question_id, created_at asc);
@@ -1714,12 +1811,118 @@ create policy "Public can insert student forum replies"
         and char_length(trim(body)) between 1 and 2000
     );
 
+create or replace function public.create_forum_question(
+    p_workshop_id text,
+    p_workshop_title text,
+    p_author_name text,
+    p_author_email text default '',
+    p_title text default '',
+    p_body text default '',
+    p_country_code text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+    v_author text := left(trim(coalesce(p_author_name, '')), 120);
+    v_email text := lower(left(trim(coalesce(p_author_email, '')), 160));
+    v_title text := left(trim(coalesce(p_title, '')), 200);
+    v_body text := left(trim(coalesce(p_body, '')), 2000);
+    v_country text := upper(left(trim(coalesce(p_country_code, '')), 8));
+    v_workshop_id text := left(coalesce(nullif(trim(p_workshop_id), ''), 'general'), 64);
+    v_workshop_title text := left(coalesce(nullif(trim(p_workshop_title), ''), 'Consulta general'), 200);
+    v_q public.forum_questions%rowtype;
+begin
+    if v_author = '' or v_title = '' then
+        return jsonb_build_object('ok', false, 'message', 'Escribe tu nombre y el título de tu duda.');
+    end if;
+
+    insert into public.forum_questions (
+        workshop_id, workshop_title, author_name, author_email, country_code, title, body, status
+    ) values (
+        v_workshop_id, v_workshop_title, v_author, v_email, v_country, v_title, v_body, 'pending'
+    )
+    returning * into v_q;
+
+    insert into public.app_activity_logs (event_type, actor_email, actor_name, workshop_id, country_code)
+    values ('forum_question', v_email, v_author, v_workshop_id, v_country);
+
+    return jsonb_build_object(
+        'ok', true,
+        'question', jsonb_build_object(
+            'id', v_q.id,
+            'workshopId', v_q.workshop_id,
+            'workshopTitle', v_q.workshop_title,
+            'authorName', v_q.author_name,
+            'countryCode', v_q.country_code,
+            'title', v_q.title,
+            'body', v_q.body,
+            'status', v_q.status,
+            'createdAt', v_q.created_at,
+            'replies', '[]'::jsonb
+        )
+    );
+end;
+$$;
+
+create or replace function public.add_student_forum_reply(
+    p_question_id uuid,
+    p_author_name text,
+    p_body text,
+    p_country_code text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+    v_author text := left(trim(coalesce(p_author_name, '')), 120);
+    v_body text := left(trim(coalesce(p_body, '')), 2000);
+    v_country text := upper(left(trim(coalesce(p_country_code, '')), 8));
+    v_reply public.forum_replies%rowtype;
+begin
+    if v_author = '' or v_body = '' then
+        return jsonb_build_object('ok', false, 'message', 'Escribe tu nombre y tu comentario.');
+    end if;
+
+    insert into public.forum_replies (
+        question_id, author_name, author_role, country_code, body, is_official
+    ) values (
+        p_question_id, v_author, 'student', v_country, v_body, false
+    )
+    returning * into v_reply;
+
+    insert into public.app_activity_logs (event_type, actor_name, country_code)
+    values ('forum_reply', v_author, v_country);
+
+    return jsonb_build_object(
+        'ok', true,
+        'reply', jsonb_build_object(
+            'id', v_reply.id,
+            'questionId', v_reply.question_id,
+            'authorName', v_reply.author_name,
+            'authorRole', v_reply.author_role,
+            'countryCode', v_reply.country_code,
+            'body', v_reply.body,
+            'isOfficial', v_reply.is_official,
+            'createdAt', v_reply.created_at
+        )
+    );
+end;
+$$;
+
+drop function if exists public.admin_reply_forum_question(text, text, uuid, text, text);
+
 create or replace function public.admin_reply_forum_question(
     p_admin_email text,
     p_access_key text,
     p_question_id uuid,
     p_teacher_name text,
-    p_reply_body text
+    p_reply_body text,
+    p_country_code text default ''
 )
 returns jsonb
 language plpgsql
@@ -1728,6 +1931,7 @@ set search_path = public, extensions
 as $$
 declare
     v_email text := lower(trim(coalesce(p_admin_email, '')));
+    v_country text := upper(left(trim(coalesce(p_country_code, '')), 8));
     v_user public.admin_users%rowtype;
     v_reply public.forum_replies%rowtype;
 begin
@@ -1745,13 +1949,14 @@ begin
     limit 1;
 
     insert into public.forum_replies (
-        question_id, author_name, author_role, author_admin_id, author_email, body, is_official
+        question_id, author_name, author_role, author_admin_id, author_email, country_code, body, is_official
     ) values (
         p_question_id,
         left(coalesce(nullif(trim(p_teacher_name), ''), v_user.display_name, 'Profesor / Colaborador'), 120),
         'teacher',
         v_user.id,
         v_email,
+        v_country,
         left(trim(p_reply_body), 2000),
         true
     )
@@ -1761,6 +1966,9 @@ begin
     set status = 'answered'
     where id = p_question_id;
 
+    insert into public.app_activity_logs (event_type, actor_email, actor_name, country_code)
+    values ('forum_reply', v_email, v_reply.author_name, v_country);
+
     return jsonb_build_object(
         'ok', true,
         'reply', jsonb_build_object(
@@ -1769,6 +1977,7 @@ begin
             'authorName', v_reply.author_name,
             'authorRole', v_reply.author_role,
             'authorAdminId', v_reply.author_admin_id,
+            'countryCode', v_reply.country_code,
             'body', v_reply.body,
             'isOfficial', v_reply.is_official,
             'createdAt', v_reply.created_at
@@ -1789,7 +1998,7 @@ set search_path = public, extensions
 as $$
 begin
     if not public.is_valid_owner_admin(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo los dueños de la feria pueden eliminar preguntas del foro.');
+        return jsonb_build_object('ok', false, 'message', 'Solo los organizadores de la feria pueden eliminar preguntas del foro.');
     end if;
 
     delete from public.forum_questions where id = p_question_id;
@@ -1816,7 +2025,7 @@ declare
     v_clean_author text := left(trim(coalesce(p_author_name, '')), 120);
 begin
     if not public.is_valid_owner_admin(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo los dueños de la feria pueden editar preguntas del foro.');
+        return jsonb_build_object('ok', false, 'message', 'Solo los organizadores de la feria pueden editar preguntas del foro.');
     end if;
 
     if v_clean_title = '' then
@@ -1883,7 +2092,7 @@ begin
             (v_reply.author_admin_id is not null and v_reply.author_admin_id = v_caller.id)
             or (trim(coalesce(v_reply.author_email, '')) <> '' and lower(v_reply.author_email) = v_email)
         ) then
-            return jsonb_build_object('ok', false, 'message', 'Como colaboradora, solo puedes editar tus propias respuestas.');
+            return jsonb_build_object('ok', false, 'message', 'Solo puedes editar tus propias respuestas.');
         end if;
     end if;
 
@@ -1907,7 +2116,7 @@ set search_path = public, extensions
 as $$
 begin
     if not public.is_valid_owner_admin(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo los dueños de la feria pueden eliminar comentarios del hilo.');
+        return jsonb_build_object('ok', false, 'message', 'Solo los organizadores de la feria pueden eliminar comentarios del hilo.');
     end if;
 
     delete from public.forum_replies where id = p_reply_id;
@@ -1915,14 +2124,16 @@ begin
 end;
 $$;
 
-grant execute on function public.admin_reply_forum_question(text, text, uuid, text, text) to anon, authenticated;
+grant execute on function public.create_forum_question(text, text, text, text, text, text, text) to anon, authenticated;
+grant execute on function public.add_student_forum_reply(uuid, text, text, text) to anon, authenticated;
+grant execute on function public.admin_reply_forum_question(text, text, uuid, text, text, text) to anon, authenticated;
 grant execute on function public.admin_delete_forum_question(text, text, uuid) to anon, authenticated;
 grant execute on function public.admin_update_forum_question(text, text, uuid, text, text, text) to anon, authenticated;
 grant execute on function public.admin_update_forum_reply(text, text, uuid, text) to anon, authenticated;
 grant execute on function public.admin_delete_forum_reply(text, text, uuid) to anon, authenticated;
 
 -- =====================================================================
--- 6. DUEÑOS PRE-AUTORIZADOS Y ALUMNA DE PRUEBA REAL
+-- 6. ORGANIZADORES PRE-AUTORIZADOS Y ALUMNA DE PRUEBA REAL
 -- =====================================================================
 insert into public.admin_users (admin_email, display_name, access_key_hash, role, approval_status, must_change_password, is_active)
 values

@@ -6,6 +6,7 @@ import {
     fetchPublicRecordingStatuses,
     getSavedAdminCredentials,
     getSavedStudentSession,
+    logStudentActivity,
     saveStudentProgress,
     verifyStudentAccess,
 } from './services/accessService';
@@ -90,6 +91,7 @@ const App: React.FC = () => {
         verifyStudentAccess({
             email: saved.email,
             purchaseCode: saved.classroomPassword || saved.purchaseCode,
+            skipLog: true,
         })
             .then((res) => {
                 if (!active) return;
@@ -172,11 +174,18 @@ const App: React.FC = () => {
         }
     };
 
-    const handleValidatePassBackground = () => {
+    const handleValidatePassBackground = (classId?: string) => {
         if (!studentSession) return;
+        void logStudentActivity({
+            email: studentSession.email,
+            actorName: studentSession.fullName,
+            eventType: 'classroom_click',
+            workshopId: classId || selectedClassId,
+        });
         void verifyStudentAccess({
             email: studentSession.email,
             purchaseCode: studentSession.classroomPassword || studentSession.purchaseCode,
+            skipLog: true,
         })
             .then((freshCheck) => {
                 if (
@@ -209,6 +218,7 @@ const App: React.FC = () => {
             const freshCheck = await verifyStudentAccess({
                 email: studentSession.email,
                 purchaseCode: studentSession.classroomPassword || studentSession.purchaseCode,
+                skipLog: true,
             }).catch(() => null);
 
             if (freshCheck && (freshCheck.status === 'BLOCKED_MAX_DEVICES' || freshCheck.status === 'BLOCKED_GEO')) {

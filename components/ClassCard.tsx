@@ -6,7 +6,7 @@ interface ClassCardProps {
     clase: Clase;
     currentTime: Date;
     onGoToClass: (classId: string) => void;
-    onValidatePassBackground?: () => void;
+    onValidatePassBackground?: (classId: string) => void;
     isCompleted: boolean;
     onToggleComplete: (classId: string) => void;
     studentSession: VerifiedStudentSession | null;
@@ -351,7 +351,7 @@ const ClassCard: React.FC<ClassCardProps> = ({
                         href={classroomTargetUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        onClick={() => onValidatePassBackground?.()}
+                        onClick={() => onValidatePassBackground?.(clase.id)}
                         className={`block w-full text-center py-4 px-5 text-base md:text-lg font-bold rounded-full transition-all transform hover:scale-[1.02] duration-200 bg-[#A3363D] hover:bg-[#862B31] text-white shadow-[0_6px_16px_rgba(163,54,61,0.30)] ${
                             isLive ? 'animate-pulse' : ''
                         }`}
