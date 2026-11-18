@@ -69,10 +69,21 @@ const App: React.FC = () => {
     const [programTab, setProgramTab] = useState<'talleres' | 'foro'>('talleres');
     const [forumWorkshopFilter, setForumWorkshopFilter] = useState<string>('all');
     const [openAgendaDay, setOpenAgendaDay] = useState<string | null>(null);
-    const [showIntro, setShowIntro] = useState(true);
+    const [showIntro, setShowIntro] = useState<boolean>(() => {
+        try {
+            return sessionStorage.getItem('territorio_canva_6ta_intro_played_v1') !== '1';
+        } catch {
+            return true;
+        }
+    });
     const [confettiBurst, setConfettiBurst] = useState<number>(0);
 
     const handleFinishIntro = useCallback(() => {
+        try {
+            sessionStorage.setItem('territorio_canva_6ta_intro_played_v1', '1');
+        } catch {
+            // Ignorar si sessionStorage no está disponible
+        }
         setShowIntro(false);
     }, []);
 
@@ -337,18 +348,6 @@ const App: React.FC = () => {
                                         <span>Foro de Dudas</span>
                                     </button>
                                 </div>
-
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        document
-                                            .getElementById('agenda-por-dia')
-                                            ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                                    }
-                                    className="px-4 py-2.5 rounded-full bg-[#243E29] border border-[#FFE9B8]/40 text-[#FFE9B8] hover:bg-[#3F6B45] hover:text-white text-xs font-bold shadow-sm transition-colors"
-                                >
-                                    📁 Agenda por día
-                                </button>
                             </div>
                         </div>
 

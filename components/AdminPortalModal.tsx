@@ -252,8 +252,6 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
         setFeedbackMsg(null);
     }, [isOpen, initialTab]);
 
-    if (!isOpen) return null;
-
     const handleAdminLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setAuthLoading(true);
@@ -1146,6 +1144,8 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
             maxSlotCount,
         };
     }, [students, activityLogs, forumQuestions]);
+
+    if (!isOpen) return null;
 
     const getAlertReasonLabel = (reason: DeviceAccessAlert['reason']) => {
         if (reason === 'IP_MISMATCH') return 'Bloqueo por IP distinta (posible enlace compartido)';
