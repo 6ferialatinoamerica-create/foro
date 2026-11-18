@@ -415,12 +415,33 @@ async function detectClientIp(): Promise<string> {
 }
 
 async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-    });
-    return (await response.json()) as T;
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const rawText = await response.text();
+        if (!rawText) {
+            return {
+                ok: false,
+                message: `El servidor respondió sin contenido (código ${response.status}).`,
+            } as T;
+        }
+        try {
+            return JSON.parse(rawText) as T;
+        } catch {
+            return {
+                ok: false,
+                message: `Respuesta inesperada del servidor (código ${response.status}). Verifica la conexión o variables de entorno.`,
+            } as T;
+        }
+    } catch {
+        return {
+            ok: false,
+            message: 'No pudimos conectar con el servidor. Verifica tu conexión a internet e inténtalo nuevamente.',
+        } as T;
+    }
 }
 
 const findValidLocalAdmin = (
@@ -1539,11 +1560,41 @@ export async function fetchAdminDashboard(params: {
     message?: string;
 }> {
     if (isSupabaseConfigured) {
-        return postJson('/api/admin', {
+        const res = await postJson<{
+            ok: boolean;
+            adminId?: string;
+            role?: AdminRole;
+            students?: AdminStudentRecord[];
+            alerts?: DeviceAccessAlert[];
+            admins?: AdminUserSummary[];
+            recordings?: RecordingStatusMap;
+            activityLogs?: ActivityLogEntry[];
+            message?: string;
+        }>('/api/admin', {
             action: 'dashboard',
             adminEmail: params.adminEmail,
             accessKey: params.accessKey,
         });
+        if (!res.ok) return res;
+        return {
+            ...res,
+            students: Array.isArray(res.students)
+                ? res.students.map((s) => ({
+                      ...s,
+                      completedClassIds: Array.isArray(s.completedClassIds) ? s.completedClassIds : [],
+                  }))
+                : [],
+            alerts: Array.isArray(res.alerts)
+                ? res.alerts.map((a) => ({
+                      ...a,
+                      countriesSeen: Array.isArray(a.countriesSeen) ? a.countriesSeen : [],
+                      ipsSeen: Array.isArray(a.ipsSeen) ? a.ipsSeen : [],
+                  }))
+                : [],
+            admins: Array.isArray(res.admins) ? res.admins : [],
+            recordings: res.recordings && typeof res.recordings === 'object' ? res.recordings : {},
+            activityLogs: Array.isArray(res.activityLogs) ? res.activityLogs : [],
+        };
     }
 
     const db = readLocalDb();

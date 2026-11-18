@@ -69,80 +69,84 @@ function writeLocalQuestions(questions: ForumQuestion[]): void {
 
 export async function fetchForumQuestions(): Promise<ForumQuestion[]> {
     if (isSupabaseConfigured && supabase) {
-        const primaryQ = await supabase
-            .from('forum_questions')
-            .select('id, workshop_id, workshop_title, author_name, country_code, title, body, status, created_at')
-            .order('created_at', { ascending: false })
-            .limit(100);
-
-        let qRows: Array<Record<string, unknown>> | null = primaryQ.data as Array<Record<string, unknown>> | null;
-        let qError = primaryQ.error;
-
-        if (qError && String(qError.message || '').includes('country_code')) {
-            const fallbackQ = await supabase
+        try {
+            const primaryQ = await supabase
                 .from('forum_questions')
-                .select('id, workshop_id, workshop_title, author_name, title, body, status, created_at')
+                .select('id, workshop_id, workshop_title, author_name, country_code, title, body, status, created_at')
                 .order('created_at', { ascending: false })
                 .limit(100);
-            qRows = fallbackQ.data as Array<Record<string, unknown>> | null;
-            qError = fallbackQ.error;
-        }
 
-        if (qError || !qRows) {
-            return readLocalQuestions();
-        }
+            let qRows: Array<Record<string, unknown>> | null = primaryQ.data as Array<Record<string, unknown>> | null;
+            let qError = primaryQ.error;
 
-        const questionIds = qRows.map((q) => q.id);
-        let repliesByQuestion: Record<string, ForumReply[]> = {};
+            if (qError && String(qError.message || '').includes('country_code')) {
+                const fallbackQ = await supabase
+                    .from('forum_questions')
+                    .select('id, workshop_id, workshop_title, author_name, title, body, status, created_at')
+                    .order('created_at', { ascending: false })
+                    .limit(100);
+                qRows = fallbackQ.data as Array<Record<string, unknown>> | null;
+                qError = fallbackQ.error;
+            }
 
-        if (questionIds.length > 0) {
-            const primaryR = await supabase
-                .from('forum_replies')
-                .select('id, question_id, author_name, author_role, author_admin_id, country_code, body, is_official, created_at')
-                .in('question_id', questionIds)
-                .order('created_at', { ascending: true });
+            if (qError || !qRows) {
+                return readLocalQuestions();
+            }
 
-            let rRows: Array<Record<string, unknown>> | null = primaryR.data as Array<Record<string, unknown>> | null;
-            if (primaryR.error && String(primaryR.error.message || '').includes('country_code')) {
-                const fallbackR = await supabase
+            const questionIds = qRows.map((q) => q.id);
+            let repliesByQuestion: Record<string, ForumReply[]> = {};
+
+            if (questionIds.length > 0) {
+                const primaryR = await supabase
                     .from('forum_replies')
-                    .select('id, question_id, author_name, author_role, author_admin_id, body, is_official, created_at')
+                    .select('id, question_id, author_name, author_role, author_admin_id, country_code, body, is_official, created_at')
                     .in('question_id', questionIds)
                     .order('created_at', { ascending: true });
-                rRows = fallbackR.data as Array<Record<string, unknown>> | null;
-            }
-            if (rRows) {
-                repliesByQuestion = rRows.reduce<Record<string, ForumReply[]>>((acc, r) => {
-                    const qId = String(r.question_id);
-                    if (!acc[qId]) acc[qId] = [];
-                    acc[qId].push({
-                        id: String(r.id),
-                        questionId: qId,
-                        authorName: String(r.author_name || ''),
-                        authorRole: r.author_role === 'teacher' ? 'teacher' : 'student',
-                        authorAdminId: r.author_admin_id ? String(r.author_admin_id) : undefined,
-                        countryCode: r.country_code ? String(r.country_code).toUpperCase() : undefined,
-                        body: String(r.body || ''),
-                        isOfficial: Boolean(r.is_official),
-                        createdAt: String(r.created_at || ''),
-                    });
-                    return acc;
-                }, {});
-            }
-        }
 
-        return qRows.map((q) => ({
-            id: String(q.id),
-            workshopId: String(q.workshop_id || ''),
-            workshopTitle: String(q.workshop_title || ''),
-            authorName: String(q.author_name || ''),
-            countryCode: q.country_code ? String(q.country_code).toUpperCase() : undefined,
-            title: String(q.title || ''),
-            body: String(q.body || ''),
-            status: q.status === 'answered' ? 'answered' : 'pending',
-            createdAt: String(q.created_at || ''),
-            replies: repliesByQuestion[String(q.id)] || [],
-        }));
+                let rRows: Array<Record<string, unknown>> | null = primaryR.data as Array<Record<string, unknown>> | null;
+                if (primaryR.error && String(primaryR.error.message || '').includes('country_code')) {
+                    const fallbackR = await supabase
+                        .from('forum_replies')
+                        .select('id, question_id, author_name, author_role, author_admin_id, body, is_official, created_at')
+                        .in('question_id', questionIds)
+                        .order('created_at', { ascending: true });
+                    rRows = fallbackR.data as Array<Record<string, unknown>> | null;
+                }
+                if (rRows) {
+                    repliesByQuestion = rRows.reduce<Record<string, ForumReply[]>>((acc, r) => {
+                        const qId = String(r.question_id);
+                        if (!acc[qId]) acc[qId] = [];
+                        acc[qId].push({
+                            id: String(r.id),
+                            questionId: qId,
+                            authorName: String(r.author_name || ''),
+                            authorRole: r.author_role === 'teacher' ? 'teacher' : 'student',
+                            authorAdminId: r.author_admin_id ? String(r.author_admin_id) : undefined,
+                            countryCode: r.country_code ? String(r.country_code).toUpperCase() : undefined,
+                            body: String(r.body || ''),
+                            isOfficial: Boolean(r.is_official),
+                            createdAt: String(r.created_at || ''),
+                        });
+                        return acc;
+                    }, {});
+                }
+            }
+
+            return qRows.map((q) => ({
+                id: String(q.id),
+                workshopId: String(q.workshop_id || ''),
+                workshopTitle: String(q.workshop_title || ''),
+                authorName: String(q.author_name || ''),
+                countryCode: q.country_code ? String(q.country_code).toUpperCase() : undefined,
+                title: String(q.title || ''),
+                body: String(q.body || ''),
+                status: q.status === 'answered' ? 'answered' : 'pending',
+                createdAt: String(q.created_at || ''),
+                replies: repliesByQuestion[String(q.id)] || [],
+            }));
+        } catch {
+            return readLocalQuestions();
+        }
     }
 
     return readLocalQuestions();

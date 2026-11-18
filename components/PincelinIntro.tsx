@@ -32,17 +32,34 @@ const PincelinIntro: React.FC<PincelinIntroProps> = ({ onFinish }) => {
     useEffect(() => {
         if (typeof window === 'undefined') return;
 
+        let cancelled = false;
+        let finished = false;
+        const finishOnce = () => {
+            if (cancelled || finished) return;
+            finished = true;
+            onFinish();
+        };
+
+        // Respaldo absoluto para que la pantalla verde nunca quede fija si la imagen o el canvas fallan
+        const hardTimeout = setTimeout(finishOnce, 4300);
+
         const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         if (prefersReducedMotion) {
-            onFinish();
+            clearTimeout(hardTimeout);
+            finishOnce();
             return;
         }
 
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        if (!canvas) {
+            clearTimeout(hardTimeout);
+            finishOnce();
+            return;
+        }
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-            onFinish();
+            clearTimeout(hardTimeout);
+            finishOnce();
             return;
         }
 
@@ -50,7 +67,6 @@ const PincelinIntro: React.FC<PincelinIntroProps> = ({ onFinish }) => {
         let revealTimeout: ReturnType<typeof setTimeout> | undefined;
         let fadeTimeout: ReturnType<typeof setTimeout> | undefined;
         let finishTimeout: ReturnType<typeof setTimeout> | undefined;
-        let cancelled = false;
 
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const width = window.innerWidth;
@@ -65,11 +81,16 @@ const PincelinIntro: React.FC<PincelinIntroProps> = ({ onFinish }) => {
         img.crossOrigin = 'anonymous';
 
         img.onerror = () => {
-            if (!cancelled) onFinish();
+            finishOnce();
         };
 
         img.onload = () => {
-            if (cancelled) return;
+            if (cancelled || finished) return;
+
+            if (!img.naturalWidth || !img.naturalHeight) {
+                finishOnce();
+                return;
+            }
 
             const maxMascotW = Math.min(width * 0.72, 310);
             const maxMascotH = Math.min(height * 0.46, 360);
@@ -87,12 +108,18 @@ const PincelinIntro: React.FC<PincelinIntroProps> = ({ onFinish }) => {
             offscreen.height = drawH;
             const offCtx = offscreen.getContext('2d');
             if (!offCtx) {
-                onFinish();
+                finishOnce();
                 return;
             }
 
-            offCtx.drawImage(img, 0, 0, drawW, drawH);
-            const imgData = offCtx.getImageData(0, 0, drawW, drawH).data;
+            let imgData: Uint8ClampedArray;
+            try {
+                offCtx.drawImage(img, 0, 0, drawW, drawH);
+                imgData = offCtx.getImageData(0, 0, drawW, drawH).data;
+            } catch {
+                finishOnce();
+                return;
+            }
 
             const step = width < 640 ? 5 : 4;
             const particles: FrostParticle[] = [];
@@ -240,9 +267,7 @@ const PincelinIntro: React.FC<PincelinIntroProps> = ({ onFinish }) => {
                 if (!cancelled) setPhase('fading');
             }, 3100);
 
-            finishTimeout = setTimeout(() => {
-                if (!cancelled) onFinish();
-            }, 3650);
+            finishTimeout = setTimeout(finishOnce, 3650);
         };
 
         img.src = GLOBAL_CONFIG.URL_MASCOTA_PINCELIN;
@@ -250,6 +275,7 @@ const PincelinIntro: React.FC<PincelinIntroProps> = ({ onFinish }) => {
         return () => {
             cancelled = true;
             cancelAnimationFrame(animationFrameId);
+            clearTimeout(hardTimeout);
             if (revealTimeout) clearTimeout(revealTimeout);
             if (fadeTimeout) clearTimeout(fadeTimeout);
             if (finishTimeout) clearTimeout(finishTimeout);

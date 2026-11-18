@@ -198,26 +198,31 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
 
     const loadDashboard = useCallback(async (email: string, key: string) => {
         setDashboardLoading(true);
-        const [res, forumList] = await Promise.all([
-            fetchAdminDashboard({ adminEmail: email, accessKey: key }),
-            fetchForumQuestions(),
-        ]);
-        setDashboardLoading(false);
-        setForumQuestions(forumList);
-        if (res.ok) {
-            if (res.adminId) setAdminId(res.adminId);
-            const resolvedRole = normalizeAdminRole(res.role);
-            setAdminRole(resolvedRole);
-            if (resolvedRole === 'teacher') {
-                setActiveTab('forum');
+        try {
+            const [res, forumList] = await Promise.all([
+                fetchAdminDashboard({ adminEmail: email, accessKey: key }),
+                fetchForumQuestions(),
+            ]);
+            setForumQuestions(Array.isArray(forumList) ? forumList : []);
+            if (res.ok) {
+                if (res.adminId) setAdminId(res.adminId);
+                const resolvedRole = normalizeAdminRole(res.role);
+                setAdminRole(resolvedRole);
+                if (resolvedRole === 'teacher') {
+                    setActiveTab('forum');
+                }
+                setStudents(Array.isArray(res.students) ? res.students : []);
+                setAlerts(Array.isArray(res.alerts) ? res.alerts : []);
+                setAdmins(Array.isArray(res.admins) ? res.admins : []);
+                setRecordingsMap(res.recordings || {});
+                setActivityLogs(Array.isArray(res.activityLogs) ? res.activityLogs : []);
+            } else {
+                setFeedbackMsg(res.message || 'No se pudo cargar la información.');
             }
-            setStudents(res.students || []);
-            setAlerts(res.alerts || []);
-            setAdmins(res.admins || []);
-            setRecordingsMap(res.recordings || {});
-            setActivityLogs(res.activityLogs || []);
-        } else {
-            setFeedbackMsg(res.message || 'No se pudo cargar la información.');
+        } catch {
+            setFeedbackMsg('Ocurrió un error al cargar el panel. Inténtalo de nuevo.');
+        } finally {
+            setDashboardLoading(false);
         }
     }, []);
 
@@ -255,11 +260,18 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
         setAuthError(null);
         setAuthSuccessNotice(null);
 
-        const res = await verifyAdminAccess({
-            adminEmail,
-            accessKey,
-            displayName: displayName || 'Administrador',
-        });
+        let res: Awaited<ReturnType<typeof verifyAdminAccess>>;
+        try {
+            res = await verifyAdminAccess({
+                adminEmail,
+                accessKey,
+                displayName: displayName || 'Administrador',
+            });
+        } catch {
+            setAuthLoading(false);
+            setAuthError('No pudimos validar tus credenciales en este momento. Intenta de nuevo.');
+            return;
+        }
 
         setAuthLoading(false);
 
@@ -1003,7 +1015,8 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
         forumQuestions.forEach((q) => {
             const qTime = new Date(q.createdAt).getTime();
             if (Number.isNaN(qTime)) return;
-            const officialReply = q.replies.find((r) => r.isOfficial || r.authorRole === 'teacher');
+            const repliesList = Array.isArray(q.replies) ? q.replies : [];
+            const officialReply = repliesList.find((r) => r.isOfficial || r.authorRole === 'teacher');
             if (!officialReply) return;
             const rTime = new Date(officialReply.createdAt).getTime();
             if (!Number.isNaN(rTime) && rTime >= qTime) {
@@ -1059,7 +1072,9 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
         if (activityLogs.length === 0) {
             forumQuestions.forEach((q) => {
                 addCountryStat(q.countryCode, 'interaction');
-                q.replies.forEach((r) => addCountryStat(r.countryCode, 'interaction'));
+                (Array.isArray(q.replies) ? q.replies : []).forEach((r) =>
+                    addCountryStat(r.countryCode, 'interaction')
+                );
             });
         }
 
@@ -1094,7 +1109,9 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                 ? activityLogs.map((l) => l.createdAt)
                 : [
                       ...forumQuestions.map((q) => q.createdAt),
-                      ...forumQuestions.flatMap((q) => q.replies.map((r) => r.createdAt)),
+                      ...forumQuestions.flatMap((q) =>
+                          (Array.isArray(q.replies) ? q.replies : []).map((r) => r.createdAt)
+                      ),
                   ];
 
         timestamps.forEach((iso) => {
@@ -2502,10 +2519,10 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                                     <p className="text-xs text-[#2B2B2B]/80 tabular-nums">
                                                         Equipo bloqueado: {alert.attemptedDeviceLabel}
                                                         {alert.attemptedIp ? ` · IP detectada: ${alert.attemptedIp}` : ''}
-                                                        {alert.ipsSeen && alert.ipsSeen.length > 0
+                                                        {Array.isArray(alert.ipsSeen) && alert.ipsSeen.length > 0
                                                             ? ` · IPs vistas: ${alert.ipsSeen.join(', ')}`
                                                             : ''}
-                                                        {alert.countriesSeen.length > 0
+                                                        {Array.isArray(alert.countriesSeen) && alert.countriesSeen.length > 0
                                                             ? ` · Países: ${alert.countriesSeen.join(', ')}`
                                                             : ''}
                                                     </p>

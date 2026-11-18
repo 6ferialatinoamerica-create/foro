@@ -147,7 +147,9 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                         q.body,
                         q.authorName,
                         q.workshopTitle,
-                        ...q.replies.map((r) => `${r.authorName} ${r.body}`),
+                        ...(Array.isArray(q.replies) ? q.replies : []).map(
+                            (r) => `${r.authorName} ${r.body}`
+                        ),
                     ],
                     searchTerm
                 );
