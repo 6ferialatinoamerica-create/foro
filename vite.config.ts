@@ -101,6 +101,8 @@ export default defineConfig(() => {
                     'pwa-192x192.png',
                     'pwa-512x512.png',
                     'pwa-maskable-512x512.png',
+                    'images/banner-feria.png',
+                    'images/pincelin.png',
                 ],
                 manifest: {
                     id: '/',
@@ -139,7 +141,7 @@ export default defineConfig(() => {
                     skipWaiting: true,
                     clientsClaim: true,
                     maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-                    globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+                    globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff,woff2}'],
                     navigateFallbackDenylist: [/^\/api\//],
                     runtimeCaching: [
                         {

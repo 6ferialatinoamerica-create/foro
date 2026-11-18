@@ -70,7 +70,7 @@ export const useClassReminders = (classes: Clase[]) => {
                 const timeoutId = setTimeout(() => {
                     new Notification('¡La clase está por comenzar!', {
                         body: `"${clase.titulo}" comienza en ${REMINDER_MINUTES_BEFORE} minutos.`,
-                        icon: '/assets/aistudio/Copia_de_ARTES_6TA_FERIA_CANVA_NAVIDAD__3__6f474642.png',
+                        icon: '/images/pincelin.png',
                         tag: `reminder-${classId}` // Prevent duplicate notifications
                     });
                 }, delay);

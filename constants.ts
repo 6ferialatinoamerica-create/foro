@@ -7,8 +7,8 @@ export const GLOBAL_CONFIG = {
     URL_INSCRIPCION_CTA,
     URL_LANDING_OFICIAL,
     URL_ACCESO_PLATAFORMA: 'https://www.aulavirtual-premium.com/acceso',
-    URL_BANNER: '/assets/aistudio/Copia_de_ARTES_6TA_FERIA_CANVA_NAVIDAD__4__f1152183.png',
-    URL_MASCOTA_PINCELIN: '/assets/aistudio/Copia_de_ARTES_6TA_FERIA_CANVA_NAVIDAD__3__6f474642.png',
+    URL_BANNER: '/images/banner-feria.png',
+    URL_MASCOTA_PINCELIN: '/images/pincelin.png',
     EVENT_TITLE: '6ta Feria Latinoamérica Territorio Canva',
     EVENT_EDITION: 'Edición Navideña',
     EVENT_DATES_LABEL: 'Del 23 al 27 de noviembre de 2026',
@@ -92,7 +92,7 @@ const classDataRaw: RawClase[] = [
         startTime: new Date('2026-11-23T10:00:00-04:00'),
         ponentes: [{
             nombre: 'Yussef Álvarez',
-            foto: 'https://6taferialatinoamericaterritoriocanv.vercel.app/img/yussef.jpg',
+            foto: '/images/instructors/yussef.jpg',
             datos: {
                 usuario: '@elprofeyussef',
                 instagram: 'https://www.instagram.com/elprofeyussef?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==',
@@ -113,7 +113,7 @@ const classDataRaw: RawClase[] = [
         startTime: new Date('2026-11-23T14:00:00-04:00'),
         ponentes: [{
             nombre: 'Zully Martínez',
-            foto: 'https://6taferialatinoamericaterritoriocanv.vercel.app/img/zully.jpg',
+            foto: '/images/instructors/zully.jpg',
             datos: {
             },
         }],
@@ -132,7 +132,7 @@ const classDataRaw: RawClase[] = [
         startTime: new Date('2026-11-24T10:00:00-04:00'),
         ponentes: [{
             nombre: 'Gaby Linares',
-            foto: 'https://6taferialatinoamericaterritoriocanv.vercel.app/img/gaby.jpg',
+            foto: '/images/instructors/gaby.jpg',
             datos: {
                 usuario: '@gabylinares.ds',
                 instagram: 'https://www.instagram.com/gabylinares.ds?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==',
@@ -153,7 +153,7 @@ const classDataRaw: RawClase[] = [
         startTime: new Date('2026-11-24T14:00:00-04:00'),
         ponentes: [{
             nombre: 'Sabrina Acosta',
-            foto: 'https://6taferialatinoamericaterritoriocanv.vercel.app/img/sabrina.jpg',
+            foto: '/images/instructors/sabrina.jpg',
             datos: {
                 usuario: '@sabrinacreadigital',
                 instagram: 'https://www.instagram.com/sabrinacreadigital?igsh=ZXdzcnZ4eDg0OG1m',
@@ -174,7 +174,7 @@ const classDataRaw: RawClase[] = [
         startTime: new Date('2026-11-25T10:00:00-04:00'),
         ponentes: [{
             nombre: 'Adriana Rosenthal',
-            foto: 'https://6taferialatinoamericaterritoriocanv.vercel.app/img/adriana.jpg',
+            foto: '/images/instructors/adriana.jpg',
             datos: {
             },
         }],
@@ -193,7 +193,7 @@ const classDataRaw: RawClase[] = [
         startTime: new Date('2026-11-25T14:00:00-04:00'),
         ponentes: [{
             nombre: 'Wendy Valverde',
-            foto: 'https://6taferialatinoamericaterritoriocanv.vercel.app/img/wendy.jpg',
+            foto: '/images/instructors/wendy.jpg',
             datos: {
             },
         }],
@@ -212,7 +212,7 @@ const classDataRaw: RawClase[] = [
         startTime: new Date('2026-11-26T10:00:00-04:00'),
         ponentes: [{
             nombre: 'Careliz Cabrera',
-            foto: 'https://6taferialatinoamericaterritoriocanv.vercel.app/img/careliz.jpg',
+            foto: '/images/instructors/careliz.jpg',
             datos: {
                 usuario: '@careliz.cabrera',
                 instagram: 'https://www.instagram.com/careliz.cabrera?igsh=MXM5NGR2M3pwb3hqaw==',
@@ -233,7 +233,7 @@ const classDataRaw: RawClase[] = [
         startTime: new Date('2026-11-26T14:00:00-04:00'),
         ponentes: [{
             nombre: 'Yussef Álvarez',
-            foto: 'https://6taferialatinoamericaterritoriocanv.vercel.app/img/yussef.jpg',
+            foto: '/images/instructors/yussef.jpg',
             datos: {
                 usuario: '@elprofeyussef',
                 instagram: 'https://www.instagram.com/elprofeyussef?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==',
@@ -254,7 +254,7 @@ const classDataRaw: RawClase[] = [
         startTime: new Date('2026-11-27T14:00:00-04:00'),
         ponentes: [{
             nombre: 'Lisbeth Mora',
-            foto: 'https://6taferialatinoamericaterritoriocanv.vercel.app/img/lisbeth.jpg',
+            foto: '/images/instructors/lisbeth.jpg',
             datos: {
                 usuario: '@emprendemosdigital',
                 instagram: 'https://www.instagram.com/emprendemosdigital?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==',
