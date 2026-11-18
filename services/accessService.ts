@@ -1,4 +1,4 @@
-import { isSupabaseConfigured } from '../lib/supabaseClient';
+import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 import type {
     AccessVerificationResult,
     AdminApprovalStatus,
@@ -6,6 +6,7 @@ import type {
     AdminStudentRecord,
     AdminUserSummary,
     DeviceAccessAlert,
+    RecordingStatusMap,
     SavedAdminCredentials,
     StudentEmailCheckResult,
     VerifiedStudentSession,
@@ -49,6 +50,7 @@ interface LocalDbState {
     testStudentSeeded?: boolean;
     students: LocalStudentEntry[];
     alerts: DeviceAccessAlert[];
+    recordings?: RecordingStatusMap;
 }
 
 export const getOrCreateDeviceId = (): string => {
@@ -177,11 +179,12 @@ const normalizeLocalDb = (raw: LocalDbState): {
     testStudentSeeded: boolean;
     students: LocalStudentEntry[];
     alerts: DeviceAccessAlert[];
+    recordings: RecordingStatusMap;
 } => {
     const admins: LocalAdminEntry[] = Array.isArray(raw.admins)
         ? raw.admins.map((a) => ({
               ...a,
-              role: a.role === 'teacher' ? 'teacher' : 'owner',
+              role: a.role === 'teacher' ? 'teacher' : a.role === 'support' ? 'support' : 'owner',
               approvalStatus: a.approvalStatus === 'pending' ? 'pending' : 'approved',
               mustChangePassword: Boolean(a.mustChangePassword),
           }))
@@ -270,6 +273,8 @@ const normalizeLocalDb = (raw: LocalDbState): {
     }
 
     const alerts: DeviceAccessAlert[] = Array.isArray(raw.alerts) ? raw.alerts : [];
+    const recordings: RecordingStatusMap =
+        raw.recordings && typeof raw.recordings === 'object' ? { ...raw.recordings } : {};
     return {
         admin: raw.admin ?? null,
         admins,
@@ -278,6 +283,7 @@ const normalizeLocalDb = (raw: LocalDbState): {
         testStudentSeeded: true,
         students,
         alerts,
+        recordings,
     };
 };
 
@@ -298,6 +304,7 @@ const readLocalDb = () => {
         testStudentSeeded: false,
         students: [],
         alerts: [],
+        recordings: {},
     });
 };
 
@@ -353,7 +360,12 @@ const findValidLocalAdmin = (
     db: ReturnType<typeof normalizeLocalDb>,
     email: string,
     accessKey: string,
-    options?: { allowPendingPasswordChange?: boolean; allowPendingApproval?: boolean; requireOwner?: boolean }
+    options?: {
+        allowPendingPasswordChange?: boolean;
+        allowPendingApproval?: boolean;
+        requireOwner?: boolean;
+        requireSupportOrOwner?: boolean;
+    }
 ): LocalAdminEntry | undefined => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanKey = accessKey.trim();
@@ -363,6 +375,7 @@ const findValidLocalAdmin = (
         if (!options?.allowPendingApproval && a.approvalStatus !== 'approved') return false;
         if (!options?.allowPendingPasswordChange && a.mustChangePassword) return false;
         if (options?.requireOwner && a.role !== 'owner') return false;
+        if (options?.requireSupportOrOwner && a.role !== 'owner' && a.role !== 'support') return false;
         return true;
     });
 };
@@ -380,6 +393,11 @@ export const isLocalAdminValid = (email: string, accessKey: string): boolean => 
 export const isLocalOwnerAdminValid = (email: string, accessKey: string): boolean => {
     const db = readLocalDb();
     return Boolean(findValidLocalAdmin(db, email, accessKey, { requireOwner: true }));
+};
+
+export const isLocalSupportOrOwnerValid = (email: string, accessKey: string): boolean => {
+    const db = readLocalDb();
+    return Boolean(findValidLocalAdmin(db, email, accessKey, { requireSupportOrOwner: true }));
 };
 
 export async function checkStudentEmail(email: string): Promise<StudentEmailCheckResult> {
@@ -1082,7 +1100,8 @@ export async function registerAdminAccount(params: {
     const cleanEmail = params.adminEmail.trim().toLowerCase();
     const cleanKey = params.accessKey.trim();
     const cleanName = params.displayName.trim() || 'Administrador';
-    const targetRole: AdminRole = params.role === 'teacher' ? 'teacher' : 'owner';
+    const targetRole: AdminRole =
+        params.role === 'teacher' ? 'teacher' : params.role === 'support' ? 'support' : 'owner';
     const mustChange = Boolean(params.mustChangePassword);
 
     if (!cleanEmail || !cleanEmail.includes('@') || cleanKey.length < 4) {
@@ -1318,6 +1337,111 @@ export async function deleteAdminAccount(params: {
     return { ok: true, selfDeleted: isSelf };
 }
 
+export async function fetchPublicRecordingStatuses(): Promise<RecordingStatusMap> {
+    if (isSupabaseConfigured && supabase) {
+        try {
+            const { data, error } = await supabase
+                .from('workshop_recordings')
+                .select('workshop_id, is_recording_ready');
+
+            if (!error && Array.isArray(data)) {
+                const map: RecordingStatusMap = {};
+                data.forEach((row: { workshop_id?: string; is_recording_ready?: boolean }) => {
+                    if (row.workshop_id) {
+                        map[row.workshop_id] = Boolean(row.is_recording_ready);
+                    }
+                });
+                return map;
+            }
+        } catch {
+            // Fallback to local state if table is not created yet or offline
+        }
+    }
+    return readLocalDb().recordings;
+}
+
+export async function toggleWorkshopRecording(params: {
+    adminEmail: string;
+    accessKey: string;
+    workshopId: string;
+    isReady: boolean;
+}): Promise<{ ok: boolean; workshopId?: string; isRecordingReady?: boolean; message?: string }> {
+    const cleanId = params.workshopId.trim();
+    if (!cleanId) {
+        return { ok: false, message: 'Taller no válido.' };
+    }
+
+    if (isSupabaseConfigured) {
+        return postJson('/api/admin', {
+            action: 'toggle_recording',
+            adminEmail: params.adminEmail,
+            accessKey: params.accessKey,
+            workshopId: cleanId,
+            isReady: Boolean(params.isReady),
+        });
+    }
+
+    const db = readLocalDb();
+    if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireSupportOrOwner: true })) {
+        return { ok: false, message: 'Solo dueños o soporte pueden actualizar el estado de grabaciones.' };
+    }
+
+    db.recordings[cleanId] = Boolean(params.isReady);
+    writeLocalDb(db);
+    return { ok: true, workshopId: cleanId, isRecordingReady: Boolean(params.isReady) };
+}
+
+export async function updateAdminRole(params: {
+    adminEmail: string;
+    accessKey: string;
+    targetAdminId: string;
+    newRole: AdminRole;
+}): Promise<{ ok: boolean; role?: AdminRole; message?: string }> {
+    const targetRole: AdminRole =
+        params.newRole === 'teacher' ? 'teacher' : params.newRole === 'support' ? 'support' : 'owner';
+
+    if (isSupabaseConfigured) {
+        return postJson('/api/admin', {
+            action: 'update_admin_role',
+            adminEmail: params.adminEmail,
+            accessKey: params.accessKey,
+            targetAdminId: params.targetAdminId,
+            newRole: targetRole,
+        });
+    }
+
+    const db = readLocalDb();
+    if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireOwner: true })) {
+        return { ok: false, message: 'Solo los dueños de la feria pueden cambiar roles administrativos.' };
+    }
+
+    const target = db.admins.find((a) => a.id === params.targetAdminId);
+    if (!target) {
+        return { ok: false, message: 'No encontramos la cuenta indicada.' };
+    }
+
+    if (target.role === 'owner' && targetRole !== 'owner' && target.approvalStatus === 'approved') {
+        const remainingOwners = db.admins.filter(
+            (a) =>
+                a.id !== params.targetAdminId &&
+                a.isActive &&
+                a.approvalStatus === 'approved' &&
+                a.role === 'owner'
+        ).length;
+
+        if (remainingOwners < 1) {
+            return {
+                ok: false,
+                message: 'Debe quedar al menos un dueño activo en la plataforma antes de cambiar este rol.',
+            };
+        }
+    }
+
+    target.role = targetRole;
+    writeLocalDb(db);
+    return { ok: true, role: targetRole };
+}
+
 export async function fetchAdminDashboard(params: {
     adminEmail: string;
     accessKey: string;
@@ -1328,6 +1452,7 @@ export async function fetchAdminDashboard(params: {
     students?: AdminStudentRecord[];
     alerts?: DeviceAccessAlert[];
     admins?: AdminUserSummary[];
+    recordings?: RecordingStatusMap;
     message?: string;
 }> {
     if (isSupabaseConfigured) {
@@ -1344,7 +1469,7 @@ export async function fetchAdminDashboard(params: {
         return { ok: false, message: 'Acceso no autorizado o pendiente cambio de clave temporal.' };
     }
 
-    if (matched.role !== 'owner') {
+    if (matched.role === 'teacher') {
         return {
             ok: true,
             adminId: matched.id,
@@ -1352,6 +1477,19 @@ export async function fetchAdminDashboard(params: {
             students: [],
             alerts: [],
             admins: [],
+            recordings: {},
+        };
+    }
+
+    if (matched.role === 'support') {
+        return {
+            ok: true,
+            adminId: matched.id,
+            role: 'support',
+            students: db.students,
+            alerts: db.alerts,
+            admins: [],
+            recordings: db.recordings,
         };
     }
 
@@ -1373,6 +1511,7 @@ export async function fetchAdminDashboard(params: {
         students: db.students,
         alerts: db.alerts,
         admins: adminsSummary,
+        recordings: db.recordings,
     };
 }
 
@@ -1395,8 +1534,8 @@ export async function upsertAdminStudent(params: {
     }
 
     const db = readLocalDb();
-    if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireOwner: true })) {
-        return { ok: false, message: 'Solo los dueños de la feria pueden registrar o modificar alumnas.' };
+    if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireSupportOrOwner: true })) {
+        return { ok: false, message: 'Solo dueños o soporte pueden registrar o modificar alumnas.' };
     }
 
     const cleanEmail = params.email.trim().toLowerCase();
@@ -1477,8 +1616,8 @@ export async function bulkUpsertAdminStudents(params: {
     }
 
     const db = readLocalDb();
-    if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireOwner: true })) {
-        return { ok: false, message: 'Solo los dueños de la feria pueden subir listados CSV / XLSX.' };
+    if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireSupportOrOwner: true })) {
+        return { ok: false, message: 'Solo dueños o soporte pueden subir listados CSV / XLSX.' };
     }
 
     let count = 0;
@@ -1543,8 +1682,8 @@ export async function resetAdminStudentDevices(params: {
     }
 
     const db = readLocalDb();
-    if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireOwner: true })) {
-        return { ok: false, message: 'Solo los dueños de la feria pueden restablecer dispositivos.' };
+    if (!findValidLocalAdmin(db, params.adminEmail, params.accessKey, { requireSupportOrOwner: true })) {
+        return { ok: false, message: 'Solo dueños o soporte pueden restablecer dispositivos.' };
     }
 
     const student = db.students.find((s) => s.id === params.studentId);

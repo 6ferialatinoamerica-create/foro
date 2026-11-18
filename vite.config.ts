@@ -12,6 +12,37 @@ function localApiDevPlugin(): Plugin {
                 const parsedUrl = new URL(req.url || '/', 'http://localhost');
                 const reqPath = parsedUrl.pathname;
 
+                if (
+                    reqPath === '/__export_repo' &&
+                    parsedUrl.searchParams.get('token') === '6taCanvaZip2026' &&
+                    (req.method === 'GET' || req.method === 'HEAD')
+                ) {
+                    const zipPath = path.resolve(
+                        __dirname,
+                        '.aistudio/artifacts/brain/6d06e9b9-e294-4140-af2b-ffcd499ad33f/feria-territorio-canva-github.zip'
+                    );
+                    if (!fs.existsSync(zipPath)) {
+                        res.statusCode = 404;
+                        res.end('No encontrado.');
+                        return;
+                    }
+                    const stat = fs.statSync(zipPath);
+                    res.statusCode = 200;
+                    res.setHeader('Content-Type', 'application/zip');
+                    res.setHeader(
+                        'Content-Disposition',
+                        'attachment; filename="feria-territorio-canva-github.zip"'
+                    );
+                    res.setHeader('Content-Length', String(stat.size));
+                    res.setHeader('Cache-Control', 'no-store');
+                    if (req.method === 'HEAD') {
+                        res.end();
+                        return;
+                    }
+                    fs.createReadStream(zipPath).pipe(res);
+                    return;
+                }
+
                 if (reqPath === '/api/client-ip' && req.method === 'GET') {
                     const forwarded = req.headers['x-forwarded-for'];
                     const rawIp =
@@ -142,7 +173,7 @@ export default defineConfig(() => {
                     clientsClaim: true,
                     maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
                     globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff,woff2}'],
-                    navigateFallbackDenylist: [/^\/api\//],
+                    navigateFallbackDenylist: [/^\/api\//, /^\/__export_repo/],
                     runtimeCaching: [
                         {
                             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

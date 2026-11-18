@@ -498,8 +498,8 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
                                 {authStep === 'email'
                                     ? 'Ingresa el correo electrónico con el que compraste tu entrada. Protegemos tu acceso hasta en 2 dispositivos conectados desde la misma IP.'
                                     : authStep === 'activate'
-                                      ? '¡Estás inscrita! Pega aquí la contraseña que recibiste de ClassOnLive (o crea tu clave) para guardarla y copiarla rápido al entrar a clases.'
-                                      : 'Ingresa tu contraseña registrada para desbloquear tu acceso y ver tus datos de ClassOnLive.'}
+                                      ? '¡Estás inscrita! Pega aquí la contraseña que recibiste de ClassOnLive para guardarla en este equipo y copiarla rápido al entrar a tus clases.'
+                                      : 'Ingresa tu contraseña de ClassOnLive registrada para desbloquear tu acceso.'}
                             </p>
                         </div>
 
@@ -575,7 +575,7 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
 
                                 <div>
                                     <label htmlFor="student-activate-password" className="block text-xs font-bold text-[#2B2B2B] mb-1">
-                                        Pega tu clave de ClassOnLive o crea tu clave (mín. 4 caracteres) *
+                                        Contraseña asignada de ClassOnLive (mín. 4 caracteres) *
                                     </label>
                                     <div className="flex gap-2">
                                         <input
@@ -585,7 +585,7 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
                                             minLength={4}
                                             value={accessPassword}
                                             onChange={(e) => setAccessPassword(e.target.value)}
-                                            placeholder="Ej. Tu clave de ClassOnLive"
+                                            placeholder="Pega tu clave de ClassOnLive"
                                             className="flex-1 px-3.5 py-2.5 rounded-xl bg-[#FBF5E6] border border-[#E5DAC0] text-sm text-[#2B2B2B] focus:outline-none focus:border-[#3F6B45]"
                                         />
                                         <button
@@ -600,7 +600,7 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
 
                                 <div>
                                     <label htmlFor="student-activate-confirm" className="block text-xs font-bold text-[#2B2B2B] mb-1">
-                                        Confirmar clave *
+                                        Confirmar clave de ClassOnLive *
                                     </label>
                                     <input
                                         id="student-activate-confirm"
@@ -609,7 +609,7 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
                                         minLength={4}
                                         value={confirmPassword}
                                         onChange={(e) => setConfirmPassword(e.target.value)}
-                                        placeholder="Repite la clave"
+                                        placeholder="Repite tu clave de ClassOnLive"
                                         className="w-full px-3.5 py-2.5 rounded-xl bg-[#FBF5E6] border border-[#E5DAC0] text-sm text-[#2B2B2B] focus:outline-none focus:border-[#3F6B45]"
                                     />
                                 </div>
@@ -653,7 +653,7 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
 
                                 <div>
                                     <label htmlFor="student-access-password" className="block text-xs font-bold text-[#2B2B2B] mb-1">
-                                        Tu clave de acceso
+                                        Tu clave de ClassOnLive
                                     </label>
                                     <div className="flex gap-2">
                                         <input
@@ -662,7 +662,7 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
                                             required
                                             value={accessPassword}
                                             onChange={(e) => setAccessPassword(e.target.value)}
-                                            placeholder="Ingresa tu clave guardada o asignada"
+                                            placeholder="Ingresa tu clave de ClassOnLive"
                                             className="flex-1 px-3.5 py-2.5 rounded-xl bg-[#FBF5E6] border border-[#E5DAC0] text-sm text-[#2B2B2B] focus:outline-none focus:border-[#3F6B45]"
                                         />
                                         <button

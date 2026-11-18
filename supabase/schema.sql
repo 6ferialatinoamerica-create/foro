@@ -120,7 +120,7 @@ create table if not exists public.admin_users (
     admin_email text not null unique,
     display_name text not null default 'Administrador',
     access_key_hash text not null,
-    role text not null default 'owner' check (role in ('owner', 'teacher')),
+    role text not null default 'owner' check (role in ('owner', 'support', 'teacher')),
     approval_status text not null default 'approved' check (approval_status in ('approved', 'pending')),
     must_change_password boolean not null default false,
     is_active boolean not null default true,
@@ -136,7 +136,7 @@ alter table public.admin_users
     drop constraint if exists admin_users_role_check;
 
 alter table public.admin_users
-    add constraint admin_users_role_check check (role in ('owner', 'teacher'));
+    add constraint admin_users_role_check check (role in ('owner', 'support', 'teacher'));
 
 alter table public.admin_users
     drop constraint if exists admin_users_approval_status_check;
@@ -144,12 +144,27 @@ alter table public.admin_users
 alter table public.admin_users
     add constraint admin_users_approval_status_check check (approval_status in ('approved', 'pending'));
 
+create table if not exists public.workshop_recordings (
+    workshop_id text primary key,
+    is_recording_ready boolean not null default false,
+    updated_by text not null default '',
+    updated_at timestamptz not null default now()
+);
+
 -- Seguridad estricta: ninguna tabla sensible se lee ni escribe directamente desde el cliente.
--- Todo acceso ocurre mediante funciones RPC SECURITY DEFINER.
+-- Todo acceso ocurre mediante funciones RPC SECURITY DEFINER (salvo lectura pública del estado de grabaciones).
 alter table public.enrolled_students enable row level security;
 alter table public.student_devices enable row level security;
 alter table public.device_access_alerts enable row level security;
 alter table public.admin_users enable row level security;
+alter table public.workshop_recordings enable row level security;
+
+drop policy if exists "Public can read workshop recordings" on public.workshop_recordings;
+create policy "Public can read workshop recordings"
+    on public.workshop_recordings
+    for select
+    to anon, authenticated
+    using (true);
 
 -- =====================================================================
 -- 3. FUNCIONES RPC PARA ALUMNAS (ACTIVACIÓN POR CORREO, MISMA IP Y PROGRESO)
@@ -821,6 +836,42 @@ begin
 end;
 $$;
 
+create or replace function public.is_valid_support_or_owner(
+    p_admin_email text,
+    p_access_key text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+    v_email text := lower(trim(coalesce(p_admin_email, '')));
+    v_key text := trim(coalesce(p_access_key, ''));
+    v_user public.admin_users%rowtype;
+begin
+    if v_email = '' or v_key = '' then
+        return false;
+    end if;
+
+    select *
+    into v_user
+    from public.admin_users
+    where lower(admin_email) = v_email
+      and is_active = true
+      and coalesce(approval_status, 'approved') = 'approved'
+      and role in ('owner', 'support')
+      and must_change_password = false
+    limit 1;
+
+    if not found then
+        return false;
+    end if;
+
+    return v_user.access_key_hash = extensions.crypt(v_key, v_user.access_key_hash);
+end;
+$$;
+
 create or replace function public.verify_admin_access(
     p_admin_email text,
     p_access_key text
@@ -954,7 +1005,11 @@ declare
     v_name text := left(coalesce(nullif(trim(p_display_name), ''), 'Administrador'), 120);
     v_req_email text := lower(trim(coalesce(p_requester_email, '')));
     v_req_key text := trim(coalesce(p_requester_key, ''));
-    v_role text := case when lower(trim(coalesce(p_role, 'owner'))) = 'teacher' then 'teacher' else 'owner' end;
+    v_role text := case
+        when lower(trim(coalesce(p_role, 'owner'))) = 'teacher' then 'teacher'
+        when lower(trim(coalesce(p_role, 'owner'))) = 'support' then 'support'
+        else 'owner'
+    end;
     v_must_change boolean := coalesce(p_must_change_password, false);
     v_real_admins_count integer := 0;
     v_saved_id uuid;
@@ -1178,6 +1233,97 @@ begin
 end;
 $$;
 
+create or replace function public.admin_update_user_role(
+    p_admin_email text,
+    p_access_key text,
+    p_target_admin_id uuid,
+    p_new_role text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+    v_target public.admin_users%rowtype;
+    v_clean_role text := case
+        when lower(trim(coalesce(p_new_role, 'owner'))) = 'teacher' then 'teacher'
+        when lower(trim(coalesce(p_new_role, 'owner'))) = 'support' then 'support'
+        else 'owner'
+    end;
+    v_remaining_owners integer := 0;
+begin
+    if not public.is_valid_owner_admin(p_admin_email, p_access_key) then
+        return jsonb_build_object('ok', false, 'message', 'Solo los dueños de la feria pueden cambiar roles administrativos.');
+    end if;
+
+    select * into v_target
+    from public.admin_users
+    where id = p_target_admin_id;
+
+    if not found then
+        return jsonb_build_object('ok', false, 'message', 'No encontramos la cuenta indicada.');
+    end if;
+
+    if v_target.role = 'owner' and v_clean_role <> 'owner' and coalesce(v_target.approval_status, 'approved') = 'approved' then
+        select count(*)::integer into v_remaining_owners
+        from public.admin_users
+        where id <> p_target_admin_id
+          and is_active = true
+          and coalesce(approval_status, 'approved') = 'approved'
+          and role = 'owner';
+
+        if v_remaining_owners < 1 then
+            return jsonb_build_object(
+                'ok', false,
+                'message', 'Debe quedar al menos un dueño activo en la plataforma antes de cambiar este rol.'
+            );
+        end if;
+    end if;
+
+    update public.admin_users
+    set role = v_clean_role
+    where id = p_target_admin_id;
+
+    return jsonb_build_object('ok', true, 'role', v_clean_role);
+end;
+$$;
+
+create or replace function public.admin_toggle_workshop_recording(
+    p_admin_email text,
+    p_access_key text,
+    p_workshop_id text,
+    p_is_ready boolean
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+    v_email text := lower(trim(coalesce(p_admin_email, '')));
+    v_workshop_id text := trim(coalesce(p_workshop_id, ''));
+    v_ready boolean := coalesce(p_is_ready, false);
+begin
+    if not public.is_valid_support_or_owner(v_email, p_access_key) then
+        return jsonb_build_object('ok', false, 'message', 'Solo dueños o soporte pueden actualizar el estado de grabaciones.');
+    end if;
+
+    if v_workshop_id = '' then
+        return jsonb_build_object('ok', false, 'message', 'Taller no válido.');
+    end if;
+
+    insert into public.workshop_recordings (workshop_id, is_recording_ready, updated_by, updated_at)
+    values (v_workshop_id, v_ready, v_email, now())
+    on conflict (workshop_id) do update
+    set is_recording_ready = excluded.is_recording_ready,
+        updated_by = excluded.updated_by,
+        updated_at = now();
+
+    return jsonb_build_object('ok', true, 'workshopId', v_workshop_id, 'isRecordingReady', v_ready);
+end;
+$$;
+
 create or replace function public.admin_list_dashboard(
     p_admin_email text,
     p_access_key text
@@ -1194,6 +1340,7 @@ declare
     v_students jsonb := '[]'::jsonb;
     v_alerts jsonb := '[]'::jsonb;
     v_admins jsonb := '[]'::jsonb;
+    v_recordings jsonb := '{}'::jsonb;
 begin
     if not public.is_valid_admin(v_email, p_access_key) then
         return jsonb_build_object('ok', false, 'message', 'Acceso no autorizado o pendiente cambio de clave temporal.');
@@ -1206,7 +1353,7 @@ begin
 
     v_role := coalesce(v_caller.role, 'owner');
 
-    if v_role = 'owner' then
+    if v_role in ('owner', 'support') then
         select coalesce(jsonb_agg(row_to_json(s_data) order by s_data."createdAt" desc), '[]'::jsonb)
         into v_students
         from (
@@ -1250,6 +1397,12 @@ begin
             limit 100
         ) a_data;
 
+        select coalesce(jsonb_object_agg(r.workshop_id, r.is_recording_ready), '{}'::jsonb)
+        into v_recordings
+        from public.workshop_recordings r;
+    end if;
+
+    if v_role = 'owner' then
         select coalesce(jsonb_agg(row_to_json(adm_data) order by adm_data."createdAt" asc), '[]'::jsonb)
         into v_admins
         from (
@@ -1273,7 +1426,8 @@ begin
         'role', v_role,
         'students', v_students,
         'alerts', v_alerts,
-        'admins', v_admins
+        'admins', v_admins,
+        'recordings', v_recordings
     );
 end;
 $$;
@@ -1302,8 +1456,8 @@ declare
     v_effective_pass text := coalesce(nullif(v_raw_pass, ''), v_raw_code, '');
     v_needs_setup boolean := (v_effective_code = '' and v_effective_pass = '');
 begin
-    if not public.is_valid_owner_admin(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo los dueños de la feria pueden registrar o modificar alumnas.');
+    if not public.is_valid_support_or_owner(p_admin_email, p_access_key) then
+        return jsonb_build_object('ok', false, 'message', 'Solo dueños o soporte pueden registrar o modificar alumnas.');
     end if;
 
     if v_email = '' or position('@' in v_email) = 0 then
@@ -1350,8 +1504,8 @@ security definer
 set search_path = public, extensions
 as $$
 begin
-    if not public.is_valid_owner_admin(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo los dueños de la feria pueden restablecer dispositivos.');
+    if not public.is_valid_support_or_owner(p_admin_email, p_access_key) then
+        return jsonb_build_object('ok', false, 'message', 'Solo dueños o soporte pueden restablecer dispositivos.');
     end if;
 
     delete from public.student_devices where student_id = p_student_id;
@@ -1410,8 +1564,8 @@ declare
     v_needs_setup boolean;
     v_imported integer := 0;
 begin
-    if not public.is_valid_owner_admin(p_admin_email, p_access_key) then
-        return jsonb_build_object('ok', false, 'message', 'Solo los dueños de la feria pueden subir listados CSV / XLSX.');
+    if not public.is_valid_support_or_owner(p_admin_email, p_access_key) then
+        return jsonb_build_object('ok', false, 'message', 'Solo dueños o soporte pueden subir listados CSV / XLSX.');
     end if;
 
     if p_students is null or jsonb_typeof(p_students) <> 'array' then
@@ -1474,6 +1628,8 @@ grant execute on function public.admin_register_user(text, text, text, text, tex
 grant execute on function public.request_collaborator_access(text, text, text) to anon, authenticated;
 grant execute on function public.admin_review_collaborator(text, text, uuid, boolean) to anon, authenticated;
 grant execute on function public.admin_delete_user(text, text, uuid) to anon, authenticated;
+grant execute on function public.admin_update_user_role(text, text, uuid, text) to anon, authenticated;
+grant execute on function public.admin_toggle_workshop_recording(text, text, text, boolean) to anon, authenticated;
 grant execute on function public.admin_list_dashboard(text, text) to anon, authenticated;
 grant execute on function public.admin_upsert_student(text, text, text, text, text, text, text, integer, boolean) to anon, authenticated;
 grant execute on function public.admin_upsert_students_bulk(text, text, jsonb) to anon, authenticated;

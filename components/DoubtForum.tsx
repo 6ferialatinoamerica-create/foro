@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import type { Clase, ForumQuestion, VerifiedStudentSession } from '../types';
+import type { Clase, ForumQuestion, SavedAdminCredentials, VerifiedStudentSession } from '../types';
 import {
     addStudentForumReply,
+    adminReplyForumQuestion,
     createForumQuestion,
     fetchForumQuestions,
 } from '../services/forumService';
@@ -11,6 +12,7 @@ interface DoubtForumProps {
     classes: Clase[];
     selectedClassId: string;
     studentSession: VerifiedStudentSession | null;
+    adminSession?: SavedAdminCredentials | null;
     onOpenTeacherReview: () => void;
     refreshTrigger?: number;
     externalWorkshopFilter?: string;
@@ -31,6 +33,7 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
     classes,
     selectedClassId,
     studentSession,
+    adminSession,
     onOpenTeacherReview,
     refreshTrigger = 0,
     externalWorkshopFilter,
@@ -62,10 +65,13 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
     const [formError, setFormError] = useState<string | null>(null);
     const [formSuccess, setFormSuccess] = useState<string | null>(null);
 
-    // Respuesta de alumna en el hilo
+    // Respuesta en el hilo (Oficial si hay sesión de Dueño/Colaboradora, o comentario de Alumna)
     const [replyingToId, setReplyingToId] = useState<string | null>(null);
-    const [replyAuthor, setReplyAuthor] = useState(studentSession?.fullName || '');
+    const [replyAuthor, setReplyAuthor] = useState(
+        adminSession?.displayName || studentSession?.fullName || ''
+    );
     const [replyBody, setReplyBody] = useState('');
+    const [replyError, setReplyError] = useState<string | null>(null);
     const [isSubmittingReply, setIsSubmittingReply] = useState(false);
 
     useEffect(() => {
@@ -75,11 +81,13 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
     }, [externalWorkshopFilter]);
 
     useEffect(() => {
-        if (studentSession?.fullName) {
+        if (adminSession?.displayName) {
+            setReplyAuthor(adminSession.displayName);
+        } else if (studentSession?.fullName) {
             setAuthorName((prev) => prev || studentSession.fullName);
             setReplyAuthor((prev) => prev || studentSession.fullName);
         }
-    }, [studentSession]);
+    }, [adminSession, studentSession]);
 
     useEffect(() => {
         let active = true;
@@ -187,9 +195,43 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
 
     const handlePublishReply = async (e: React.FormEvent, questionId: string) => {
         e.preventDefault();
+        setReplyError(null);
         if (!replyBody.trim() || !replyAuthor.trim()) return;
 
         setIsSubmittingReply(true);
+        if (adminSession) {
+            const res = await adminReplyForumQuestion({
+                adminEmail: adminSession.email,
+                accessKey: adminSession.accessKey,
+                questionId,
+                teacherName: replyAuthor.trim() || adminSession.displayName,
+                replyBody: replyBody.trim(),
+            });
+            setIsSubmittingReply(false);
+
+            if (res.ok && res.reply) {
+                setQuestions((prev) =>
+                    prev.map((q) =>
+                        q.id === questionId
+                            ? {
+                                  ...q,
+                                  status: 'answered',
+                                  replies: [...q.replies, res.reply!],
+                              }
+                            : q
+                    )
+                );
+                setReplyBody('');
+                setReplyingToId(null);
+            } else {
+                setReplyError(
+                    res.message ||
+                        'No pudimos publicar la respuesta oficial. Verifica tu sesión en el Panel de Administración.'
+                );
+            }
+            return;
+        }
+
         const res = await addStudentForumReply({
             questionId,
             authorName: replyAuthor,
@@ -205,6 +247,8 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
             );
             setReplyBody('');
             setReplyingToId(null);
+        } else {
+            setReplyError(res.message || 'No pudimos guardar tu comentario en el hilo.');
         }
     };
 
@@ -437,18 +481,27 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                                 </div>
                             )}
 
-                            {/* Pie de tarjeta: botón para comentar en el hilo */}
+                            {/* Pie de tarjeta: botón para comentar o responder oficialmente en el hilo */}
                             <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
                                 <button
                                     type="button"
-                                    onClick={() =>
-                                        setReplyingToId((prev) => (prev === q.id ? null : q.id))
-                                    }
+                                    onClick={() => {
+                                        setReplyError(null);
+                                        setReplyingToId((prev) => (prev === q.id ? null : q.id));
+                                    }}
                                     className="text-xs font-bold text-[#A3363D] hover:underline"
                                 >
                                     {replyingToId === q.id
-                                        ? 'Ocultar comentario'
-                                        : `Comentar en el hilo (${q.replies.length})`}
+                                        ? 'Ocultar formulario'
+                                        : adminSession
+                                          ? `Responder oficialmente como ${
+                                                adminSession.role === 'teacher'
+                                                    ? 'Colaboradora'
+                                                    : adminSession.role === 'support'
+                                                      ? 'Soporte'
+                                                      : 'Dueño/a'
+                                            } (${q.replies.length})`
+                                          : `Comentar en el hilo (${q.replies.length})`}
                                 </button>
                             </div>
 
@@ -457,13 +510,25 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                                     onSubmit={(e) => handlePublishReply(e, q.id)}
                                     className="bg-[#FFFDF7] border border-[#E5DAC0] rounded-xl p-3 space-y-2.5"
                                 >
+                                    {adminSession && (
+                                        <div className="px-3 py-1.5 rounded-lg bg-[#3F6B45]/10 border border-[#3F6B45]/30 text-[11px] font-bold text-[#2E4F35]">
+                                            ✓ Sesión activa (
+                                            {adminSession.role === 'teacher'
+                                                ? 'Colaboradora'
+                                                : adminSession.role === 'support'
+                                                  ? 'Soporte'
+                                                  : 'Dueño/a'}
+                                            ): se publicará como{' '}
+                                            <span className="underline">Respuesta oficial</span> y marcará la duda como resuelta.
+                                        </div>
+                                    )}
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                         <input
                                             type="text"
                                             required
                                             value={replyAuthor}
                                             onChange={(e) => setReplyAuthor(e.target.value)}
-                                            placeholder="Tu nombre *"
+                                            placeholder={adminSession ? 'Nombre del profesor/a *' : 'Tu nombre *'}
                                             className="px-3 py-2 rounded-lg bg-[#FBF5E6] border border-[#E5DAC0] text-xs text-[#2B2B2B]"
                                         />
                                         <input
@@ -471,16 +536,29 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                                             required
                                             value={replyBody}
                                             onChange={(e) => setReplyBody(e.target.value)}
-                                            placeholder="Escribe un aporte o seguimiento en este hilo..."
+                                            placeholder={
+                                                adminSession
+                                                    ? 'Escribe la respuesta oficial para la alumna...'
+                                                    : 'Escribe un aporte o seguimiento en este hilo...'
+                                            }
                                             className="sm:col-span-2 px-3 py-2 rounded-lg bg-[#FBF5E6] border border-[#E5DAC0] text-xs text-[#2B2B2B]"
                                         />
                                     </div>
+                                    {replyError && (
+                                        <p className="text-[11px] font-semibold text-[#A3363D]" role="alert">
+                                            {replyError}
+                                        </p>
+                                    )}
                                     <button
                                         type="submit"
                                         disabled={isSubmittingReply}
                                         className="px-4 py-1.5 rounded-full bg-[#3F6B45] hover:bg-[#2E4F35] text-white text-xs font-bold"
                                     >
-                                        {isSubmittingReply ? 'Enviando...' : 'Publicar en el hilo'}
+                                        {isSubmittingReply
+                                            ? 'Enviando...'
+                                            : adminSession
+                                              ? 'Publicar respuesta oficial'
+                                              : 'Publicar en el hilo'}
                                     </button>
                                 </form>
                             )}

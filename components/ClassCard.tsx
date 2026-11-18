@@ -6,11 +6,13 @@ interface ClassCardProps {
     clase: Clase;
     currentTime: Date;
     onGoToClass: (classId: string) => void;
+    onValidatePassBackground?: () => void;
     isCompleted: boolean;
     onToggleComplete: (classId: string) => void;
     studentSession: VerifiedStudentSession | null;
     isBlocked: boolean;
     onOpenClassForum?: (classId: string) => void;
+    isRecordingReady?: boolean;
 }
 
 function displayLocalClassTime(startTime: Date): string {
@@ -77,13 +79,17 @@ const ClassCard: React.FC<ClassCardProps> = ({
     clase,
     currentTime,
     onGoToClass,
+    onValidatePassBackground,
     isCompleted,
     onToggleComplete,
     studentSession,
     isBlocked,
     onOpenClassForum,
+    isRecordingReady = false,
 }) => {
     const [copiedField, setCopiedField] = useState<'email' | 'password' | null>(null);
+    const classroomTargetUrl =
+        studentSession?.classroomUrl?.trim() || GLOBAL_CONFIG.URL_ACCESO_PLATAFORMA;
 
     const handleQuickCopy = async (value: string, field: 'email' | 'password') => {
         if (!value) return;
@@ -94,27 +100,57 @@ const ClassCard: React.FC<ClassCardProps> = ({
         }
     };
 
-    const { isLive, isPast, statusNote } = useMemo(() => {
-        if (!clase.horarioConfirmado || !clase.startTime || !clase.endTime) {
+    const { isLive, statusType, statusNote } = useMemo(() => {
+        const hasSchedule = Boolean(clase.horarioConfirmado && clase.startTime && clase.endTime);
+        const live =
+            hasSchedule &&
+            clase.startTime &&
+            clase.endTime &&
+            currentTime >= clase.startTime &&
+            currentTime <= clase.endTime;
+
+        if (live) {
+            return {
+                isLive: true,
+                statusType: 'live' as const,
+                statusNote: null,
+            };
+        }
+
+        if (isRecordingReady) {
             return {
                 isLive: false,
-                isPast: false,
+                statusType: 'recording_ready' as const,
+                statusNote:
+                    '¡Ya puedes ver la grabación de este taller en la plataforma de clases (acceso para siempre)!',
+            };
+        }
+
+        if (!hasSchedule || !clase.startTime || !clase.endTime) {
+            return {
+                isLive: false,
+                statusType: 'unconfirmed' as const,
                 statusNote: 'El horario exacto de este taller se publicará próximamente en el programa oficial.',
             };
         }
 
         const timeAfterEnd = currentTime.getTime() - clase.endTime.getTime();
         const past = timeAfterEnd > 0;
-        const live = currentTime >= clase.startTime && currentTime <= clase.endTime;
+
+        if (past) {
+            return {
+                isLive: false,
+                statusType: 'recording_soon' as const,
+                statusNote: 'Clase finalizada · Pronto la grabación estará disponible en la plataforma.',
+            };
+        }
 
         return {
-            isLive: live,
-            isPast: past,
-            statusNote: past
-                ? 'La grabación de este taller está disponible para siempre en la plataforma de clases.'
-                : null,
+            isLive: false,
+            statusType: 'upcoming' as const,
+            statusNote: null,
         };
-    }, [clase, currentTime]);
+    }, [clase, currentTime, isRecordingReady]);
 
     return (
         <div
@@ -145,7 +181,7 @@ const ClassCard: React.FC<ClassCardProps> = ({
                             <span>{isCompleted ? 'Clase vista ✓' : 'Marcar vista'}</span>
                         </button>
 
-                        {isLive && (
+                        {isLive ? (
                             <div className="flex items-center gap-2 bg-[#A3363D] text-white px-3 py-1.5 rounded-full animate-pulse">
                                 <span className="relative flex h-2.5 w-2.5">
                                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
@@ -153,7 +189,19 @@ const ClassCard: React.FC<ClassCardProps> = ({
                                 </span>
                                 <span className="font-bold text-[10px] md:text-xs tracking-widest whitespace-nowrap">EN VIVO</span>
                             </div>
-                        )}
+                        ) : statusType === 'recording_ready' ? (
+                            <div className="flex items-center gap-1.5 bg-[#3F6B45]/15 border border-[#3F6B45]/40 text-[#2E4F35] px-3 py-1.5 rounded-full">
+                                <span className="font-bold text-[10px] md:text-xs whitespace-nowrap">
+                                    🎬 Grabación disponible
+                                </span>
+                            </div>
+                        ) : statusType === 'recording_soon' ? (
+                            <div className="flex items-center gap-1.5 bg-[#FFF4C7] border border-[#E5C158] text-[#8A5A00] px-3 py-1.5 rounded-full">
+                                <span className="font-bold text-[10px] md:text-xs whitespace-nowrap">
+                                    ⏳ Clase finalizada · Pronto grabación
+                                </span>
+                            </div>
+                        ) : null}
                     </div>
                 </div>
 
@@ -297,19 +345,21 @@ const ClassCard: React.FC<ClassCardProps> = ({
                     </p>
                 )}
 
-                {/* Botón principal de acceso a ClassOnLive (valida IP/dispositivos y abre ficha con datos listos) */}
+                {/* Botón principal de acceso a ClassOnLive: directo en 1 paso si el pase ya está activo */}
                 {studentSession && !isBlocked ? (
-                    <button
-                        type="button"
-                        onClick={() => onGoToClass(clase.id)}
-                        className={`w-full py-4 px-5 text-base md:text-lg font-bold rounded-full transition-all transform hover:scale-[1.02] duration-200 bg-[#A3363D] hover:bg-[#862B31] text-white shadow-[0_6px_16px_rgba(163,54,61,0.30)] ${
+                    <a
+                        href={classroomTargetUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => onValidatePassBackground?.()}
+                        className={`block w-full text-center py-4 px-5 text-base md:text-lg font-bold rounded-full transition-all transform hover:scale-[1.02] duration-200 bg-[#A3363D] hover:bg-[#862B31] text-white shadow-[0_6px_16px_rgba(163,54,61,0.30)] ${
                             isLive ? 'animate-pulse' : ''
                         }`}
                     >
                         {isLive
                             ? '¡EN VIVO! - Ir a ClassOnLive (Aula Virtual) →'
                             : 'Ir a ClassOnLive (Aula Virtual) →'}
-                    </button>
+                    </a>
                 ) : (
                     <button
                         type="button"
@@ -335,7 +385,15 @@ const ClassCard: React.FC<ClassCardProps> = ({
                 )}
 
                 {statusNote && (
-                    <p className="text-center text-[#2B2B2B]/85 text-xs md:text-sm font-medium border border-[#E5DAC0] p-3 rounded-2xl bg-[#FBF5E6]">
+                    <p
+                        className={`text-center text-xs md:text-sm font-medium border p-3 rounded-2xl ${
+                            statusType === 'recording_ready'
+                                ? 'bg-[#3F6B45]/10 border-[#3F6B45]/40 text-[#2E4F35]'
+                                : statusType === 'recording_soon'
+                                  ? 'bg-[#FFF4C7]/60 border-[#E5C158] text-[#6E4700]'
+                                  : 'bg-[#FBF5E6] border-[#E5DAC0] text-[#2B2B2B]/85'
+                        }`}
+                    >
                         {statusNote}{' '}
                         <a
                             href={GLOBAL_CONFIG.URL_INSCRIPCION_CTA}

@@ -93,8 +93,36 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
                 p_display_name: String(body.displayName || 'Administrador'),
                 p_requester_email: String(body.requesterEmail || ''),
                 p_requester_key: String(body.requesterKey || ''),
-                p_role: body.role === 'teacher' ? 'teacher' : 'owner',
+                p_role:
+                    body.role === 'teacher'
+                        ? 'teacher'
+                        : body.role === 'support'
+                          ? 'support'
+                          : 'owner',
                 p_must_change_password: body.mustChangePassword === true,
+            };
+            break;
+        case 'update_admin_role':
+            rpcName = 'admin_update_user_role';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_target_admin_id: String(body.targetAdminId || ''),
+                p_new_role:
+                    body.newRole === 'teacher'
+                        ? 'teacher'
+                        : body.newRole === 'support'
+                          ? 'support'
+                          : 'owner',
+            };
+            break;
+        case 'toggle_recording':
+            rpcName = 'admin_toggle_workshop_recording';
+            rpcPayload = {
+                p_admin_email: adminEmail,
+                p_access_key: accessKey,
+                p_workshop_id: String(body.workshopId || ''),
+                p_is_ready: body.isReady === true,
             };
             break;
         case 'request_collaborator':

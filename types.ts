@@ -121,8 +121,9 @@ export interface DeviceAccessAlert {
     createdAt: string;
 }
 
-export type AdminRole = 'owner' | 'teacher';
+export type AdminRole = 'owner' | 'support' | 'teacher';
 export type AdminApprovalStatus = 'approved' | 'pending';
+export type RecordingStatusMap = Record<string, boolean>;
 
 export interface AdminUserSummary {
     id: string;

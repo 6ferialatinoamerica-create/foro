@@ -3,11 +3,18 @@ import { classData, EVENT_DAYS, EVENT_INCLUDES, GLOBAL_CONFIG } from './constant
 import { useCurrentTime } from './hooks/useCurrentTime';
 import {
     clearStudentSessionLocally,
+    fetchPublicRecordingStatuses,
+    getSavedAdminCredentials,
     getSavedStudentSession,
     saveStudentProgress,
     verifyStudentAccess,
 } from './services/accessService';
-import type { AccessVerificationResult, VerifiedStudentSession } from './types';
+import type {
+    AccessVerificationResult,
+    RecordingStatusMap,
+    SavedAdminCredentials,
+    VerifiedStudentSession,
+} from './types';
 
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -53,7 +60,11 @@ const App: React.FC = () => {
     const [targetClassTitle, setTargetClassTitle] = useState<string | undefined>(undefined);
     const [adminModalOpen, setAdminModalOpen] = useState(false);
     const [adminInitialTab, setAdminInitialTab] = useState<'students' | 'alerts' | 'forum'>('students');
+    const [activeAdminSession, setActiveAdminSession] = useState<SavedAdminCredentials | null>(() =>
+        getSavedAdminCredentials()
+    );
     const [forumRefreshTrigger, setForumRefreshTrigger] = useState(0);
+    const [recordingStatuses, setRecordingStatuses] = useState<RecordingStatusMap>({});
     const [programTab, setProgramTab] = useState<'talleres' | 'foro'>('talleres');
     const [forumWorkshopFilter, setForumWorkshopFilter] = useState<string>('all');
     const [openAgendaDay, setOpenAgendaDay] = useState<string | null>(null);
@@ -105,6 +116,20 @@ const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
+        let active = true;
+        fetchPublicRecordingStatuses()
+            .then((map) => {
+                if (active) setRecordingStatuses(map);
+            })
+            .catch(() => {
+                // Mantiene estado local si hay falla temporal
+            });
+        return () => {
+            active = false;
+        };
+    }, []);
+
+    useEffect(() => {
         if (!studentSession) {
             localStorage.setItem(COMPLETED_STORAGE_KEY, JSON.stringify(completedClassIds));
         }
@@ -145,6 +170,33 @@ const App: React.FC = () => {
         if (isMarkingComplete) {
             setConfettiBurst((prev) => prev + 1);
         }
+    };
+
+    const handleValidatePassBackground = () => {
+        if (!studentSession) return;
+        void verifyStudentAccess({
+            email: studentSession.email,
+            purchaseCode: studentSession.classroomPassword || studentSession.purchaseCode,
+        })
+            .then((freshCheck) => {
+                if (
+                    freshCheck.status === 'BLOCKED_MAX_DEVICES' ||
+                    freshCheck.status === 'BLOCKED_GEO'
+                ) {
+                    clearStudentSessionLocally();
+                    setStudentSession(null);
+                    setBlockAlert(freshCheck);
+                    setAccessModalOpen(true);
+                    return;
+                }
+                if (freshCheck.ok && freshCheck.student) {
+                    setStudentSession(freshCheck.student);
+                    setCompletedClassIds(freshCheck.student.completedClassIds || []);
+                }
+            })
+            .catch(() => {
+                // Mantiene sesión local si hay falla temporal de red
+            });
     };
 
     const handleGoToClass = async (classId: string) => {
@@ -305,11 +357,13 @@ const App: React.FC = () => {
                                         clase={selectedClass}
                                         currentTime={currentTime}
                                         onGoToClass={handleGoToClass}
+                                        onValidatePassBackground={handleValidatePassBackground}
                                         isCompleted={completedClassIds.includes(selectedClass.id)}
                                         onToggleComplete={toggleCompleteClass}
                                         studentSession={studentSession}
                                         isBlocked={Boolean(blockAlert)}
                                         onOpenClassForum={handleOpenClassForum}
+                                        isRecordingReady={Boolean(recordingStatuses[selectedClass.id])}
                                     />
                                 </div>
                             </div>
@@ -319,6 +373,7 @@ const App: React.FC = () => {
                                     classes={classData}
                                     selectedClassId={selectedClassId}
                                     studentSession={studentSession}
+                                    adminSession={activeAdminSession}
                                     refreshTrigger={forumRefreshTrigger}
                                     externalWorkshopFilter={forumWorkshopFilter}
                                     onWorkshopFilterChange={setForumWorkshopFilter}
@@ -589,6 +644,10 @@ const App: React.FC = () => {
                 onClose={() => setAdminModalOpen(false)}
                 initialTab={adminInitialTab}
                 onForumUpdated={() => setForumRefreshTrigger((prev) => prev + 1)}
+                onRecordingsUpdated={() => {
+                    void fetchPublicRecordingStatuses().then(setRecordingStatuses);
+                }}
+                onAdminSessionChange={setActiveAdminSession}
             />
         </div>
     );

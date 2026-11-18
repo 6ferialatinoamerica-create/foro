@@ -441,7 +441,7 @@ export async function adminUpdateForumReply(params: {
         if (!ownsReply) {
             return {
                 ok: false,
-                message: 'Como colaboradora, solo puedes editar tus propias respuestas oficiales.',
+                message: 'Solo puedes editar tus propias respuestas oficiales.',
             };
         }
     }
