@@ -9,8 +9,9 @@ const SPLASH_FADE_MS = 400;
 const SPLASH_IMAGE_SRC = '/images/pincelin-intro.jpg';
 
 const BODY_CLIP_PATH =
-    'polygon(0% 0%, 100% 0%, 100% 40%, 60% 40%, 57% 53%, 57% 60%, 48% 69%, 44% 76%, 100% 76%, 100% 100%, 0% 100%)';
-const WING_CLIP_PATH = 'polygon(60% 40%, 100% 40%, 100% 76%, 44% 76%, 47% 68%, 55% 58%, 56% 52%)';
+    'polygon(0% 0%, 100% 0%, 100% 42%, 68.5% 42%, 67% 45.5%, 61.5% 51.5%, 56.5% 55%, 54.5% 60.5%, 48.5% 65.5%, 44% 68.5%, 44% 76%, 100% 76%, 100% 100%, 0% 100%)';
+const WING_CLIP_PATH =
+    'polygon(68.5% 42%, 100% 42%, 100% 76%, 44% 76%, 44% 68.5%, 48.5% 65.5%, 54.5% 60.5%, 56.5% 55%, 61.5% 51.5%, 67% 45.5%)';
 
 const PincelinIntro: React.FC<PincelinIntroProps> = ({ onFinish }) => {
     const [isFading, setIsFading] = useState(false);
