@@ -115,6 +115,8 @@ const classDataRaw: RawClase[] = [
             nombre: 'Zully Martínez',
             foto: '/images/instructors/zully.jpg',
             datos: {
+                usuario: '@profezullymartinez',
+                instagram: 'https://www.instagram.com/profezullymartinez?gwpx=MWo2b2phMm5kYmZjdA==',
             },
         }],
         botonAcceso: { habilitado: true, texto: 'Entrar a la clase', animacion: '' },
@@ -176,6 +178,8 @@ const classDataRaw: RawClase[] = [
             nombre: 'Adriana Rosenthal',
             foto: '/images/instructors/adriana.jpg',
             datos: {
+                usuario: '@soyadrianarosenthal',
+                instagram: 'https://www.instagram.com/soyadrianarosenthal?lqvp=MXVrODdhbW10NHpnZA==',
             },
         }],
         botonAcceso: { habilitado: true, texto: 'Entrar a la clase', animacion: '' },
@@ -195,6 +199,8 @@ const classDataRaw: RawClase[] = [
             nombre: 'Wendy Valverde',
             foto: '/images/instructors/wendy.jpg',
             datos: {
+                website: 'https://wendy-sanders.com/#inicio',
+                websiteLabel: 'wendy-sanders.com',
             },
         }],
         botonAcceso: { habilitado: true, texto: 'Entrar a la clase', animacion: '' },

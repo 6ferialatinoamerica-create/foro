@@ -1,6 +1,8 @@
 export interface PonenteDatos {
     usuario?: string;
     instagram?: string;
+    website?: string;
+    websiteLabel?: string;
     pais?: string;
 }
 

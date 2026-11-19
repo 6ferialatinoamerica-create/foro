@@ -239,10 +239,29 @@ const ClassCard: React.FC<ClassCardProps> = ({
                                         >
                                             {ponente.datos.usuario}
                                         </a>
+                                    ) : ponente.datos.website ? (
+                                        <a
+                                            href={ponente.datos.website}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-[11px] font-semibold text-[#3F6B45] hover:underline whitespace-nowrap"
+                                        >
+                                            🌐 {ponente.datos.websiteLabel || ponente.datos.website}
+                                        </a>
                                     ) : (
                                         <span className="text-[11px] font-medium text-[#3F6B45] whitespace-nowrap">
                                             {ponente.nombre.includes('Yussef') ? 'Colaborador' : 'Colaboradora'}
                                         </span>
+                                    )}
+                                    {ponente.datos.usuario && ponente.datos.instagram && ponente.datos.website && (
+                                        <a
+                                            href={ponente.datos.website}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-[11px] font-semibold text-[#3F6B45] hover:underline whitespace-nowrap"
+                                        >
+                                            🌐 {ponente.datos.websiteLabel || ponente.datos.website}
+                                        </a>
                                     )}
                                 </div>
                             ))}

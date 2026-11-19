@@ -62,6 +62,27 @@ const PonentesCard: React.FC<PonentesCardProps> = ({ clase }) => {
                                         <InstagramIcon className="w-4 h-4" />
                                         <span>{datos.usuario}</span>
                                     </a>
+                                    {datos.website && (
+                                        <a
+                                            href={datos.website}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-[#3F6B45] hover:underline font-semibold text-sm"
+                                        >
+                                            🌐 {datos.websiteLabel || datos.website}
+                                        </a>
+                                    )}
+                                </div>
+                            ) : datos.website ? (
+                                <div className="text-center mt-2 w-full flex flex-col items-center gap-2">
+                                    <a
+                                        href={datos.website}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[#3F6B45] hover:underline font-semibold text-sm"
+                                    >
+                                        🌐 {datos.websiteLabel || datos.website}
+                                    </a>
                                 </div>
                             ) : (
                                 <p className="text-[#3F6B45] text-sm font-medium mt-2">
