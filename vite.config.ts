@@ -136,7 +136,8 @@ export default defineConfig(() => {
                     'pwa-maskable-512x512.png',
                     'images/banner-feria.png',
                     'images/pincelin.png',
-                    'images/pincelin-intro.jpg',
+                    'images/pincelin-intro-body.png',
+                    'images/pincelin-intro-wing.png',
                 ],
                 manifest: {
                     id: '/',

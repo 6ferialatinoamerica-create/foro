@@ -6,12 +6,8 @@ interface PincelinIntroProps {
 
 const SPLASH_VISIBLE_MS = 1600;
 const SPLASH_FADE_MS = 400;
-const SPLASH_IMAGE_SRC = '/images/pincelin-intro.jpg';
-
-const BODY_CLIP_PATH =
-    'polygon(0% 0%, 100% 0%, 100% 42%, 68.5% 42%, 67% 45.5%, 61.5% 51.5%, 56.5% 55%, 54.5% 60.5%, 48.5% 65.5%, 44% 68.5%, 44% 76%, 100% 76%, 100% 100%, 0% 100%)';
-const WING_CLIP_PATH =
-    'polygon(68.5% 42%, 100% 42%, 100% 76%, 44% 76%, 44% 68.5%, 48.5% 65.5%, 54.5% 60.5%, 56.5% 55%, 61.5% 51.5%, 67% 45.5%)';
+const SPLASH_BODY_SRC = '/images/pincelin-intro-body.png';
+const SPLASH_WING_SRC = '/images/pincelin-intro-wing.png';
 
 const PincelinIntro: React.FC<PincelinIntroProps> = ({ onFinish }) => {
     const [isFading, setIsFading] = useState(false);
@@ -107,25 +103,23 @@ const PincelinIntro: React.FC<PincelinIntroProps> = ({ onFinish }) => {
             </button>
 
             <div className="flex flex-col items-center justify-center max-w-xs w-full">
-                {/* Ilustración limpia con capa independiente para el saludo del ala */}
+                {/* Ilustración con ala articulada detrás del puño blanco y plumas extendidas para un saludo natural sin cortes */}
                 <div className="relative w-[220px] sm:w-[250px] md:w-[270px] aspect-[768/1376] animate-splash-image-in">
                     <img
-                        src={SPLASH_IMAGE_SRC}
-                        alt="Pincelín saludando"
-                        draggable={false}
-                        style={{ clipPath: BODY_CLIP_PATH }}
-                        className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-                    />
-                    <img
-                        src={SPLASH_IMAGE_SRC}
+                        src={SPLASH_WING_SRC}
                         alt=""
                         aria-hidden="true"
                         draggable={false}
                         style={{
-                            clipPath: WING_CLIP_PATH,
-                            transformOrigin: '56% 57%',
+                            transformOrigin: '57% 59.2%',
                         }}
                         className="absolute inset-0 w-full h-full object-contain pointer-events-none animate-wing-wave"
+                    />
+                    <img
+                        src={SPLASH_BODY_SRC}
+                        alt="Pincelín saludando"
+                        draggable={false}
+                        className="relative z-10 w-full h-full object-contain pointer-events-none"
                     />
                 </div>
 
