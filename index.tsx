@@ -6,7 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 
 try {
     registerSW({
-        immediate: false,
+        immediate: true,
         onRegisteredSW(_swUrl, registration) {
             if (!registration) return;
             const checkUpdate = () => {

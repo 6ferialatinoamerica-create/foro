@@ -21,7 +21,7 @@ const DownloadPhoneIcon: React.FC<{ className?: string }> = ({ className }) => (
 );
 
 const PWAInstallButton: React.FC = () => {
-    const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
+    const { isInstallable, isInstalled, isIOS, isInAppOrIframe, install } = usePWAInstall();
     const [showInstallGuide, setShowInstallGuide] = useState(false);
 
     if (isInstalled) {
@@ -63,13 +63,19 @@ const PWAInstallButton: React.FC = () => {
                             Acceso directo en tu celular
                         </p>
                         <h3 className="font-title italic text-2xl font-bold text-[#A3363D] mt-1 pr-8">
-                            Instalar Feria Canva
+                            Instalar 6ta Feria
                         </h3>
+
+                        {isInAppOrIframe && (
+                            <div className="mt-3 p-3 rounded-xl bg-[#FFF4C7] border border-[#E5C158] text-xs text-[#2B2B2B] leading-relaxed">
+                                <strong>Importante:</strong> Estás viendo la app dentro de WhatsApp, otra red social o una vista previa. Toca el menú <strong>⋮</strong> o el botón de compartir y elige <strong>Abrir en Chrome</strong> (Android) o <strong>Abrir en Safari</strong> (iPhone) para poder instalar el ícono.
+                            </div>
+                        )}
 
                         {isIOS ? (
                             <ol className="mt-4 space-y-2.5 text-sm text-[#2B2B2B] leading-relaxed list-decimal list-inside">
                                 <li>
-                                    Abre esta página en <strong>Safari</strong> y toca el botón{' '}
+                                    Abre la página oficial en <strong>Safari</strong> y toca el botón{' '}
                                     <strong>Compartir</strong> (cuadro con flecha hacia arriba).
                                 </li>
                                 <li>
@@ -83,15 +89,15 @@ const PWAInstallButton: React.FC = () => {
                         ) : (
                             <div className="mt-4 space-y-3 text-sm text-[#2B2B2B] leading-relaxed">
                                 <p>
-                                    Instala la aplicación en la pantalla de inicio de tu celular para entrar directo a tus talleres:
+                                    Si acabas de abrir la página o desinstalaste una versión anterior, recarga la pestaña una vez en <strong>Google Chrome</strong> y vuelve a tocar este botón, o hazlo directo así:
                                 </p>
                                 <ol className="space-y-2 list-decimal list-inside">
                                     <li>
-                                        En <strong>Android (Chrome)</strong>, toca el menú <strong>⋮</strong> arriba a la derecha.
+                                        En <strong>Google Chrome</strong>, toca el menú <strong>⋮</strong> arriba a la derecha.
                                     </li>
                                     <li>
-                                        Elige <strong>Instalar aplicación</strong> o{' '}
-                                        <strong>Agregar a la pantalla principal</strong>.
+                                        Elige <strong>Agregar a la pantalla principal</strong> (luego <strong>Instalar</strong>) o{' '}
+                                        <strong>Instalar aplicación</strong>.
                                     </li>
                                     <li>
                                         En <strong>iPhone (Safari)</strong>, toca <strong>Compartir</strong> y luego{' '}

@@ -140,6 +140,7 @@ export default defineConfig(() => {
                 ],
                 manifest: {
                     id: '/',
+                    lang: 'es',
                     name: '6ta Feria Latinoamérica Territorio Canva',
                     short_name: '6ta Feria',
                     description:
