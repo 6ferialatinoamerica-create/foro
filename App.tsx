@@ -28,6 +28,7 @@ import DoubtForum from './components/DoubtForum';
 import StudentAccessModal from './components/StudentAccessModal';
 import AdminPortalModal from './components/AdminPortalModal';
 import PincelinIntro from './components/PincelinIntro';
+import LegalModal, { type LegalDocumentType } from './components/LegalModal';
 
 const COMPLETED_STORAGE_KEY = 'territorio_canva_6ta_completed_v1';
 
@@ -62,6 +63,7 @@ const App: React.FC = () => {
     const [targetClassTitle, setTargetClassTitle] = useState<string | undefined>(undefined);
     const [adminModalOpen, setAdminModalOpen] = useState(false);
     const [adminInitialTab, setAdminInitialTab] = useState<'students' | 'alerts' | 'forum'>('students');
+    const [legalDoc, setLegalDoc] = useState<LegalDocumentType | null>(null);
     const [activeAdminSession, setActiveAdminSession] = useState<SavedAdminCredentials | null>(() =>
         getSavedAdminCredentials()
     );
@@ -407,6 +409,10 @@ const App: React.FC = () => {
                                         setAdminInitialTab('forum');
                                         setAdminModalOpen(true);
                                     }}
+                                    onRequestStudentAccess={() => {
+                                        setTargetClassTitle('Foro de Dudas de la 6ta Feria');
+                                        setAccessModalOpen(true);
+                                    }}
                                 />
                             </div>
                         )}
@@ -650,6 +656,7 @@ const App: React.FC = () => {
                         setAdminInitialTab('students');
                         setAdminModalOpen(true);
                     }}
+                    onOpenLegal={(doc) => setLegalDoc(doc)}
                 />
             </div>
 
@@ -678,6 +685,13 @@ const App: React.FC = () => {
                     void fetchPublicRecordingStatuses().then(setRecordingStatuses);
                 }}
                 onAdminSessionChange={setActiveAdminSession}
+            />
+
+            <LegalModal
+                isOpen={legalDoc !== null}
+                activeDoc={legalDoc || 'terms'}
+                onSelectDoc={(doc) => setLegalDoc(doc)}
+                onClose={() => setLegalDoc(null)}
             />
         </div>
     );

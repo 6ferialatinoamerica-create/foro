@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { GLOBAL_CONFIG } from '../constants';
 import type { Clase, ForumQuestion, SavedAdminCredentials, VerifiedStudentSession } from '../types';
 import {
     addStudentForumReply,
@@ -15,6 +16,7 @@ interface DoubtForumProps {
     studentSession: VerifiedStudentSession | null;
     adminSession?: SavedAdminCredentials | null;
     onOpenTeacherReview: () => void;
+    onRequestStudentAccess?: () => void;
     refreshTrigger?: number;
     externalWorkshopFilter?: string;
     onWorkshopFilterChange?: (workshopId: string) => void;
@@ -41,10 +43,12 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
     studentSession,
     adminSession,
     onOpenTeacherReview,
+    onRequestStudentAccess,
     refreshTrigger = 0,
     externalWorkshopFilter,
     onWorkshopFilterChange,
 }) => {
+    const isForumUnlocked = Boolean(studentSession || adminSession);
     const [questions, setQuestions] = useState<ForumQuestion[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
@@ -159,6 +163,10 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
     }, [questions, workshopFilter, statusFilter, searchTerm]);
 
     const handleOpenNewModal = () => {
+        if (!isForumUnlocked) {
+            onRequestStudentAccess?.();
+            return;
+        }
         const defaultTarget =
             workshopFilter !== 'all' ? workshopFilter : selectedClassId || 'general';
         setQuestionWorkshopId(defaultTarget);
@@ -397,7 +405,25 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                 </div>
             ) : (
                 <div className="space-y-4">
-                    {filteredQuestions.map((q) => (
+                    {!isForumUnlocked && filteredQuestions.length > 0 && (
+                        <div className="rounded-2xl bg-[#FFF4C7]/75 border border-[#E5C158] px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                            <p className="text-xs sm:text-sm font-semibold text-[#2B2B2B]">
+                                Estás viendo una <strong>consulta de muestra</strong> del Foro de Dudas. Valida tu entrada para leer todas las respuestas oficiales y publicar tus consultas.
+                            </p>
+                            {onRequestStudentAccess && (
+                                <button
+                                    type="button"
+                                    onClick={onRequestStudentAccess}
+                                    className="px-4 py-2 rounded-full bg-[#A3363D] hover:bg-[#862B31] text-white text-xs font-bold whitespace-nowrap shrink-0 transition-colors"
+                                >
+                                    Validar mi entrada
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Primera consulta (o todas si la alumna/equipo está validado) */}
+                    {(isForumUnlocked ? filteredQuestions : filteredQuestions.slice(0, 1)).map((q) => (
                         <article
                             key={q.id}
                             className="rounded-2xl bg-[#FBF5E6] border border-[#E5DAC0] p-4 md:p-5 space-y-3"
@@ -454,7 +480,7 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                                 )}
                             </div>
 
-                            {/* Hilo de respuestas visibles para todas las alumnas */}
+                            {/* Hilo de respuestas */}
                             {q.replies.length > 0 && (
                                 <div className="space-y-2.5 pt-2 border-t border-[#E5DAC0]">
                                     {q.replies.map((reply) =>
@@ -512,26 +538,32 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                                 <button
                                     type="button"
                                     onClick={() => {
+                                        if (!isForumUnlocked) {
+                                            onRequestStudentAccess?.();
+                                            return;
+                                        }
                                         setReplyError(null);
                                         setReplyingToId((prev) => (prev === q.id ? null : q.id));
                                     }}
                                     className="text-xs font-bold text-[#A3363D] hover:underline"
                                 >
-                                    {replyingToId === q.id
-                                        ? 'Ocultar formulario'
-                                        : adminSession
-                                          ? `Responder oficialmente como ${
-                                                adminSession.role === 'teacher'
-                                                    ? 'Colaboradora'
-                                                    : adminSession.role === 'support'
-                                                      ? 'Soporte'
-                                                      : 'Organizador/a'
-                                            } (${q.replies.length})`
-                                          : `Comentar en el hilo (${q.replies.length})`}
+                                    {!isForumUnlocked
+                                        ? `Valida tu entrada para comentar (${q.replies.length})`
+                                        : replyingToId === q.id
+                                          ? 'Ocultar formulario'
+                                          : adminSession
+                                            ? `Responder oficialmente como ${
+                                                  adminSession.role === 'teacher'
+                                                      ? 'Colaboradora'
+                                                      : adminSession.role === 'support'
+                                                        ? 'Soporte'
+                                                        : 'Organizador/a'
+                                              } (${q.replies.length})`
+                                            : `Comentar en el hilo (${q.replies.length})`}
                                 </button>
                             </div>
 
-                            {replyingToId === q.id && (
+                            {isForumUnlocked && replyingToId === q.id && (
                                 <form
                                     onSubmit={(e) => handlePublishReply(e, q.id)}
                                     className="bg-[#FFFDF7] border border-[#E5DAC0] rounded-xl p-3 space-y-2.5"
@@ -590,6 +622,125 @@ const DoubtForum: React.FC<DoubtForumProps> = ({
                             )}
                         </article>
                     ))}
+
+                    {/* Opción B: Para visitantes sin validar, se ve la 2da pregunta como gancho y el resto se nubla con bloqueo */}
+                    {!isForumUnlocked && filteredQuestions.length > 1 && (
+                        <div className="relative rounded-2xl overflow-hidden border border-[#E5DAC0] bg-[#FBF5E6]">
+                            {/* Tarjeta gancho: título visible de la 2da pregunta + contenido difuminado */}
+                            <div className="p-4 md:p-5 space-y-3">
+                                {(() => {
+                                    const teaser = filteredQuestions[1];
+                                    return (
+                                        <>
+                                            <div className="flex flex-wrap items-start justify-between gap-2">
+                                                <div className="space-y-1">
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        {countryCodeToFlag(teaser.countryCode) && (
+                                                            <span aria-hidden="true" className="text-base leading-none shrink-0">
+                                                                {countryCodeToFlag(teaser.countryCode)}
+                                                            </span>
+                                                        )}
+                                                        <span className="font-bold text-sm text-[#2B2B2B] uppercase tracking-wide">
+                                                            {teaser.authorName}
+                                                        </span>
+                                                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#FFFDF7] border border-[#E5DAC0] text-[#2B2B2B]/75">
+                                                            Alumna
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-[11px] font-bold text-[#3F6B45]">
+                                                        {teaser.workshopTitle}
+                                                    </p>
+                                                </div>
+                                                <span
+                                                    className={`text-[11px] font-bold px-3 py-1 rounded-full shrink-0 ${
+                                                        teaser.status === 'answered'
+                                                            ? 'bg-[#3F6B45]/15 border border-[#3F6B45]/40 text-[#2E4F35]'
+                                                            : 'bg-[#FFF4C7] border border-[#E5C158] text-[#8A5A00]'
+                                                    }`}
+                                                >
+                                                    {teaser.status === 'answered'
+                                                        ? '✓ Resuelta · Sello Oficial'
+                                                        : '⏳ Pendiente por responder'}
+                                                </span>
+                                            </div>
+
+                                            <h3 className="font-bold text-base md:text-lg text-[#2B2B2B] leading-snug">
+                                                {teaser.title}
+                                            </h3>
+
+                                            {/* Vista previa visual difuminada sin exponer respuestas reales en el DOM */}
+                                            <div
+                                                aria-hidden="true"
+                                                className="space-y-3 select-none pointer-events-none blur-[5px] opacity-65 pt-1"
+                                            >
+                                                <p className="text-sm text-[#2B2B2B]/80 leading-relaxed">
+                                                    Consulta detallada sobre medidas, exportación y trucos explicados paso a paso dentro de la clase en Canva...
+                                                </p>
+                                                <div className="rounded-xl bg-[#FFFDF7] border-l-4 border-l-[#3F6B45] border border-[#E5DAC0] p-3.5 space-y-1">
+                                                    <span className="block text-[11px] font-extrabold uppercase tracking-wider text-[#3F6B45]">
+                                                        ✓ Respuesta oficial del equipo docente
+                                                    </span>
+                                                    <p className="text-xs sm:text-sm text-[#2B2B2B] leading-relaxed">
+                                                        Explicación completa del profesor con los pasos exactos y recomendaciones prácticas para tu diseño navideño...
+                                                    </p>
+                                                </div>
+                                                {filteredQuestions.length > 2 && (
+                                                    <div className="rounded-xl bg-[#FFFDF7] border border-[#E5DAC0] p-3.5 space-y-1.5">
+                                                        <span className="block text-xs font-bold text-[#2B2B2B]">
+                                                            {filteredQuestions[2].title}
+                                                        </span>
+                                                        <p className="text-xs text-[#2B2B2B]/70">
+                                                            Respuesta oficial disponible exclusivamente para participantes con entrada validada...
+                                                        </p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </>
+                                    );
+                                })()}
+                            </div>
+
+                            {/* Cortina difuminada inferior y tarjeta de invitación a validar entrada */}
+                            <div className="relative z-10 -mt-32 pt-14 pb-7 px-5 bg-gradient-to-t from-[#FFFDF7] via-[#FFFDF7]/95 to-transparent flex flex-col items-center text-center">
+                                <div className="max-w-md w-full rounded-2xl bg-[#FFFDF7] border-2 border-[#3F6B45] shadow-xl p-5 space-y-3">
+                                    <div className="w-10 h-10 mx-auto rounded-full bg-[#A3363D]/10 text-[#A3363D] flex items-center justify-center">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5" aria-hidden="true">
+                                            <path fillRule="evenodd" d="M12 1.5a5.25 5.25 0 00-5.25 5.25v3a3 3 0 00-3 3v6.75a3 3 0 003 3h10.5a3 3 0 003-3v-6.75a3 3 0 00-3-3v-3c0-2.9-2.35-5.25-5.25-5.25zm3.75 8.25v-3a3.75 3.75 0 10-7.5 0v3h7.5z" clipRule="evenodd" />
+                                        </svg>
+                                    </div>
+                                    <h4 className="font-title text-lg sm:text-xl font-bold text-[#2B2B2B]">
+                                        Para continuar consultando debes registrarte
+                                    </h4>
+                                    <p className="text-xs sm:text-sm text-[#2B2B2B]/80 leading-relaxed tabular-nums">
+                                        Hay <strong>{filteredQuestions.length - 1}</strong>{' '}
+                                        {filteredQuestions.length - 1 === 1
+                                            ? 'consulta adicional'
+                                            : 'consultas adicionales'}{' '}
+                                        con respuestas oficiales de nuestros profesores. Valida tu entrada para desbloquear todo el foro y hacer tus propias preguntas.
+                                    </p>
+                                    <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+                                        {onRequestStudentAccess && (
+                                            <button
+                                                type="button"
+                                                onClick={onRequestStudentAccess}
+                                                className="flex-1 py-3 px-4 rounded-full bg-[#A3363D] hover:bg-[#862B31] text-white text-xs sm:text-sm font-bold shadow-sm transition-colors"
+                                            >
+                                                Validar mi entrada
+                                            </button>
+                                        )}
+                                        <a
+                                            href={GLOBAL_CONFIG.URL_INSCRIPCION_CTA}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex-1 py-3 px-4 rounded-full bg-[#3F6B45] hover:bg-[#2E4F35] text-white text-xs sm:text-sm font-bold text-center transition-colors"
+                                        >
+                                            Quiero inscribirme
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 

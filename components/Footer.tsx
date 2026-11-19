@@ -1,11 +1,13 @@
 import React from 'react';
 import { GLOBAL_CONFIG } from '../constants';
+import type { LegalDocumentType } from './LegalModal';
 
 interface FooterProps {
     onOpenAdmin: () => void;
+    onOpenLegal: (doc: LegalDocumentType) => void;
 }
 
-const Footer: React.FC<FooterProps> = ({ onOpenAdmin }) => {
+const Footer: React.FC<FooterProps> = ({ onOpenAdmin, onOpenLegal }) => {
     return (
         <footer className="w-full py-12 px-4 text-center bg-[#233E29] text-white border-t border-[#3F6B45]">
             <a
@@ -35,7 +37,23 @@ const Footer: React.FC<FooterProps> = ({ onOpenAdmin }) => {
                 <span className="block text-[#CFE5D2] mt-1">Todos los derechos reservados.</span>
             </p>
 
-            <div className="mt-5">
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+                <button
+                    type="button"
+                    onClick={() => onOpenLegal('terms')}
+                    className="text-xs font-semibold text-[#CFE5D2] hover:text-white underline underline-offset-4 transition-colors"
+                >
+                    Términos y Condiciones
+                </button>
+                <span aria-hidden="true" className="text-[#CFE5D2]/40 text-xs">•</span>
+                <button
+                    type="button"
+                    onClick={() => onOpenLegal('privacy')}
+                    className="text-xs font-semibold text-[#CFE5D2] hover:text-white underline underline-offset-4 transition-colors"
+                >
+                    Política de Privacidad
+                </button>
+                <span aria-hidden="true" className="text-[#CFE5D2]/40 text-xs">•</span>
                 <button
                     type="button"
                     onClick={onOpenAdmin}

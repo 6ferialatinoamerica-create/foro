@@ -146,7 +146,7 @@ export default defineConfig(() => {
                     description:
                         '9 talleres navideños en Canva con 8 colaboradores de Latinoamérica. Del 23 al 27 de noviembre de 2026.',
                     theme_color: '#2E4F35',
-                    background_color: '#2E4F35',
+                    background_color: '#FFFFFF',
                     display: 'standalone',
                     start_url: '/',
                     scope: '/',
