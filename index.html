@@ -6,6 +6,7 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#2E4F35" />
+    <link rel="preload" as="image" href="/images/pincelin-intro.jpg" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -151,12 +152,12 @@
                             '100%': { transform: 'rotate(0deg)' },
                         },
                         'splash-text-in': {
-                            '0%': { opacity: '0', transform: 'translate3d(0, 14px, 0)' },
-                            '100%': { opacity: '1', transform: 'translate3d(0, 0, 0)' },
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
                         },
                         'splash-image-in': {
-                            '0%': { opacity: '0', transform: 'translate3d(-10px, 0, 0) scale(0.97)' },
-                            '100%': { opacity: '1', transform: 'translate3d(0, 0, 0) scale(1)' },
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
                         }
                     },
                     animation: {
@@ -174,7 +175,7 @@
         }
     </script>
 </head>
-<body class="bg-[#2E4F35] text-[#2B2B2B] font-sans antialiased">
+<body class="bg-white text-[#2B2B2B] font-sans antialiased">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
 </body>

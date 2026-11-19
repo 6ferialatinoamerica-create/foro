@@ -1,6 +1,7 @@
-import React from 'react';
-import type { Clase } from '../types';
+import React, { useMemo } from 'react';
+import type { Clase, RecordingStatusMap } from '../types';
 import { GLOBAL_CONFIG } from '../constants';
+import { resolvePincelinPosition } from '../utils/pincelinSchedule';
 
 interface PincelinPathProps {
     classes: Clase[];
@@ -8,6 +9,7 @@ interface PincelinPathProps {
     onSelectClass: (id: string) => void;
     currentTime: Date;
     completedClassIds: string[];
+    recordingStatuses: RecordingStatusMap;
 }
 
 const PATH_POINTS = [
@@ -128,25 +130,65 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
     onSelectClass,
     currentTime,
     completedClassIds,
+    recordingStatuses,
 }) => {
-    const activeIndex = Math.max(
+    const selectedIndex = Math.max(
         0,
         classes.findIndex((c) => c.id === selectedClassId)
     );
-    const activeClass = classes[activeIndex] || classes[0];
+    const selectedClass = classes[selectedIndex] || classes[0];
+
+    const pincelinState = useMemo(
+        () => resolvePincelinPosition(classes, currentTime, recordingStatuses),
+        [classes, currentTime, recordingStatuses]
+    );
+
+    const {
+        phase,
+        pincelinIndex,
+        pincelinClass,
+        isPincelinRecordingReady,
+        statusBadgeText,
+        scheduleHintText,
+    } = pincelinState;
+
+    const isViewingOtherClass = selectedIndex !== pincelinIndex;
+    const isLiveNow = phase === 'live';
+
+    const selectedClassStatus = useMemo(() => {
+        const hasSchedule = Boolean(
+            selectedClass.horarioConfirmado && selectedClass.startTime && selectedClass.endTime
+        );
+        const live =
+            hasSchedule &&
+            currentTime >= selectedClass.startTime! &&
+            currentTime <= selectedClass.endTime!;
+        const recordingReady = Boolean(recordingStatuses[selectedClass.id]);
+        const past = hasSchedule && currentTime > selectedClass.endTime!;
+
+        if (live) return { type: 'live' as const, label: 'CLASE EN VIVO' };
+        if (recordingReady) return { type: 'recording' as const, label: 'Grabación disponible' };
+        if (past) return { type: 'past' as const, label: 'Finalizada · Pronto grabación' };
+        return {
+            type: 'upcoming' as const,
+            label: selectedClass.horarioConfirmado
+                ? `${selectedClass.date} · ${selectedClass.time}`
+                : 'Horario por confirmar',
+        };
+    }, [selectedClass, currentTime, recordingStatuses]);
 
     const fullPathD = buildSmoothSvgPath(PATH_POINTS);
-    const activePathD = buildSmoothSvgPath(PATH_POINTS.slice(0, activeIndex + 1));
+    const activePathD = buildSmoothSvgPath(PATH_POINTS.slice(0, pincelinIndex + 1));
 
     const handlePrev = () => {
-        if (activeIndex > 0) {
-            onSelectClass(classes[activeIndex - 1].id);
+        if (selectedIndex > 0) {
+            onSelectClass(classes[selectedIndex - 1].id);
         }
     };
 
     const handleNext = () => {
-        if (activeIndex < classes.length - 1) {
-            onSelectClass(classes[activeIndex + 1].id);
+        if (selectedIndex < classes.length - 1) {
+            onSelectClass(classes[selectedIndex + 1].id);
         }
     };
 
@@ -158,15 +200,23 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
         const isPast =
             Boolean(clase.horarioConfirmado && clase.endTime) &&
             currentTime > clase.endTime!;
-        const isSelected = index === activeIndex;
-        const isPassedOnRoute = index < activeIndex;
+        const isPincelinHere = index === pincelinIndex;
+        const isSelected = index === selectedIndex;
+        const isPassedOnRoute = index < pincelinIndex;
         const isCompleted = completedClassIds.includes(clase.id);
 
-        return { isLive, isPast, isSelected, isPassedOnRoute, isCompleted };
+        return {
+            isLive,
+            isPast,
+            isPincelinHere,
+            isSelected,
+            isPassedOnRoute,
+            isCompleted,
+        };
     };
 
     const getBootColors = (status: ReturnType<typeof getStepStatus>) => {
-        if (status.isLive || status.isSelected) {
+        if (status.isLive || status.isPincelinHere) {
             return { fill: '#A3363D', stroke: '#FFE9B8', textClass: 'text-white' };
         }
         if (status.isCompleted) {
@@ -174,6 +224,9 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
         }
         if (status.isPassedOnRoute) {
             return { fill: '#4E7B54', stroke: '#3F6B45', textClass: 'text-white' };
+        }
+        if (status.isSelected) {
+            return { fill: '#F3E5C2', stroke: '#A3363D', textClass: 'text-[#A3363D]' };
         }
         return { fill: '#FBF5E6', stroke: '#D5C7A6', textClass: 'text-[#2B2B2B]' };
     };
@@ -195,12 +248,12 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                     </h2>
                 </div>
 
-                {/* Controles Anterior / Siguiente para avanzar clase a clase */}
+                {/* Controles Anterior / Siguiente para explorar las fichas de los talleres */}
                 <div className="flex items-center gap-2 self-start sm:self-auto">
                     <button
                         type="button"
                         onClick={handlePrev}
-                        disabled={activeIndex === 0}
+                        disabled={selectedIndex === 0}
                         className="inline-flex items-center gap-1 px-3 py-2 min-h-[40px] rounded-full border border-[#E5DAC0] bg-[#FBF5E6] text-xs font-bold text-[#2B2B2B] hover:border-[#A3363D] hover:text-[#A3363D] disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap shrink-0"
                         aria-label="Taller anterior en el camino"
                     >
@@ -208,12 +261,12 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                         <span>Anterior</span>
                     </button>
                     <span className="text-xs font-bold tabular-nums text-white px-3 py-2 rounded-full bg-[#2E4F35] whitespace-nowrap">
-                        {activeIndex + 1} / {classes.length}
+                        {selectedIndex + 1} / {classes.length}
                     </span>
                     <button
                         type="button"
                         onClick={handleNext}
-                        disabled={activeIndex === classes.length - 1}
+                        disabled={selectedIndex === classes.length - 1}
                         className="inline-flex items-center gap-1 px-3 py-2 min-h-[40px] rounded-full border border-[#E5DAC0] bg-[#FBF5E6] text-xs font-bold text-[#2B2B2B] hover:border-[#A3363D] hover:text-[#A3363D] disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap shrink-0"
                         aria-label="Siguiente taller en el camino"
                     >
@@ -247,7 +300,7 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                         strokeLinecap="round"
                     />
 
-                    {activeIndex > 0 && (
+                    {pincelinIndex > 0 && (
                         <path
                             d={activePathD}
                             fill="none"
@@ -258,11 +311,11 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                     )}
                 </svg>
 
-                {/* 9 Pisadas de bota numeradas sobre la ruta */}
+                {/* 9 Pisadas de bota numeradas sobre la ruta (sin etiquetas pequeñas encima de la bota) */}
                 <div className="grid grid-cols-9 items-start -mt-32 relative">
                     {classes.map((clase, index) => {
                         const status = getStepStatus(clase, index);
-                        const { isSelected, isCompleted } = status;
+                        const { isPincelinHere, isSelected, isCompleted } = status;
                         const colors = getBootColors(status);
                         const isTopRow = index % 2 === 1;
 
@@ -274,7 +327,7 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                                 }`}
                             >
                                 <div className="relative flex flex-col items-center">
-                                    {isSelected && (
+                                    {isPincelinHere && (
                                         <div className="absolute bottom-full mb-0.5 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
                                             <img
                                                 src={GLOBAL_CONFIG.URL_MASCOTA_PINCELIN}
@@ -289,8 +342,12 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                                         onClick={() => onSelectClass(clase.id)}
                                         aria-current={isSelected ? 'step' : undefined}
                                         title={clase.titulo}
-                                        className={`group relative flex items-center justify-center transition-transform duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3F6B45] rounded-xl ${
-                                            isSelected ? 'scale-115' : 'hover:scale-110'
+                                        className={`group relative flex items-center justify-center transition-transform duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3F6B45] rounded-xl p-0.5 ${
+                                            isPincelinHere
+                                                ? 'scale-115'
+                                                : isSelected
+                                                  ? 'scale-110 ring-2 ring-[#3F6B45] ring-offset-2 ring-offset-[#FFFDF7]'
+                                                  : 'hover:scale-110'
                                         }`}
                                     >
                                         <SantaBootprint
@@ -299,8 +356,10 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                                             isRightFoot={index % 2 === 1}
                                             className="w-11 h-14"
                                         >
-                                            <span className={`font-extrabold text-sm tabular-nums ${colors.textClass} flex items-center gap-0.5`}>
-                                                {isCompleted && !isSelected ? (
+                                            <span
+                                                className={`font-extrabold text-sm tabular-nums ${colors.textClass} flex items-center gap-0.5`}
+                                            >
+                                                {isCompleted && !isPincelinHere && !isSelected ? (
                                                     <CheckIcon className="w-4 h-4 text-white" />
                                                 ) : (
                                                     index + 1
@@ -311,15 +370,18 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                                 </div>
 
                                 <span
-                                    className={`mt-1.5 text-[11px] font-bold tracking-wide ${
-                                        isSelected
+                                    className={`mt-1.5 text-[11px] font-bold tracking-wide text-center leading-tight ${
+                                        isPincelinHere
                                             ? 'text-[#A3363D]'
-                                            : isCompleted
-                                              ? 'text-[#3F6B45]'
-                                              : 'text-[#2B2B2B]/75'
+                                            : isSelected
+                                              ? 'text-[#2E4F35] underline decoration-[#A3363D] decoration-2 underline-offset-2'
+                                              : isCompleted
+                                                ? 'text-[#3F6B45]'
+                                                : 'text-[#2B2B2B]/75'
                                     }`}
                                 >
                                     Taller {index + 1}
+                                    {isSelected && isViewingOtherClass ? ' · Viendo' : ''}
                                 </span>
                             </div>
                         );
@@ -327,34 +389,58 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                 </div>
             </div>
 
-            {/* MÓVIL (< md): Escenario con Pincelín + pisadas numeradas 1..9 */}
+            {/* MÓVIL (< md): Escenario con Pincelín en su parada real + pisadas numeradas 1..9 */}
             <div className="md:hidden relative z-10 space-y-4">
-                <div className="flex items-center gap-4 bg-[#FBF5E6] border border-[#E5DAC0] rounded-2xl p-3.5">
+                <div className="flex items-center gap-3.5 bg-[#FBF5E6] border border-[#E5DAC0] rounded-2xl p-3.5">
                     <div className="relative shrink-0">
                         <img
                             src={GLOBAL_CONFIG.URL_MASCOTA_PINCELIN}
-                            alt={`Pincelín en ${activeClass.titulo}`}
+                            alt={`Pincelín en ${pincelinClass.titulo}`}
                             className="w-20 h-20 object-contain drop-shadow-[0_4px_10px_rgba(43,43,43,0.22)]"
                         />
                     </div>
                     <div className="min-w-0 flex-1">
-                        <p className="text-[11px] uppercase tracking-wider font-bold text-[#3F6B45]">
-                            Parada {activeIndex + 1} de {classes.length}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                            <span className="text-[11px] uppercase tracking-wider font-bold text-[#3F6B45]">
+                                Parada {pincelinIndex + 1} de {classes.length}
+                            </span>
+
+                            {isLiveNow ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#A3363D] text-white text-[10px] font-extrabold uppercase tracking-wider animate-pulse">
+                                    <span className="relative flex h-2 w-2">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
+                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
+                                    </span>
+                                    <span>CLASE EN VIVO</span>
+                                </span>
+                            ) : isPincelinRecordingReady ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#3F6B45] text-white text-[10px] font-bold">
+                                    <span>🎬 Grabación disponible</span>
+                                </span>
+                            ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[#FFFDF7] border border-[#E5DAC0] text-[#2B2B2B] text-[10px] font-bold">
+                                    {statusBadgeText}
+                                </span>
+                            )}
+                        </div>
+
                         <p className="text-sm font-bold text-[#A3363D] leading-snug">
-                            {activeClass.titulo}
+                            {pincelinClass.titulo}
                         </p>
-                        <p className="text-xs text-[#2B2B2B] mt-1 truncate">
-                            Con {activeClass.ponentes.map((p) => p.nombre).join(', ')}
+                        <p className="text-xs text-[#2B2B2B]/80 mt-0.5 truncate">
+                            Con {pincelinClass.ponentes.map((p) => p.nombre).join(', ')}
+                        </p>
+                        <p className="text-[11px] font-semibold text-[#3F6B45] mt-1">
+                            {scheduleHintText}
                         </p>
                     </div>
                 </div>
 
-                {/* Pisadas de bota numeradas 1..9 */}
+                {/* Pisadas de bota numeradas 1..9 (limpias, sin etiqueta encima de la bota) */}
                 <div className="grid grid-cols-9 gap-1">
                     {classes.map((clase, index) => {
                         const status = getStepStatus(clase, index);
-                        const { isSelected, isCompleted } = status;
+                        const { isPincelinHere, isSelected, isCompleted } = status;
                         const colors = getBootColors(status);
                         return (
                             <button
@@ -363,8 +449,12 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                                 onClick={() => onSelectClass(clase.id)}
                                 aria-current={isSelected ? 'step' : undefined}
                                 aria-label={clase.titulo}
-                                className={`flex items-center justify-center py-0.5 transition-transform ${
-                                    isSelected ? 'scale-110' : ''
+                                className={`flex items-center justify-center py-0.5 rounded-lg transition-transform ${
+                                    isPincelinHere
+                                        ? 'scale-110'
+                                        : isSelected
+                                          ? 'scale-105 ring-2 ring-[#3F6B45]'
+                                          : ''
                                 }`}
                             >
                                 <SantaBootprint
@@ -374,7 +464,7 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                                     className="w-8 h-11"
                                 >
                                     <span className={`font-extrabold text-[11px] tabular-nums ${colors.textClass}`}>
-                                        {isCompleted && !isSelected ? (
+                                        {isCompleted && !isPincelinHere && !isSelected ? (
                                             <CheckIcon className="w-3.5 h-3.5 text-white" />
                                         ) : (
                                             index + 1
@@ -387,35 +477,106 @@ const PincelinPath: React.FC<PincelinPathProps> = ({
                 </div>
             </div>
 
-            {/* Franja llamativa con efecto visual indicando en qué taller está Pincelín */}
-            <div className="relative z-10 mt-5 rounded-2xl border-2 px-4 py-3.5 bg-[#2E4F35] text-white animate-attention-glow flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                <div className="flex items-start sm:items-center gap-2.5 text-sm md:text-base min-w-0">
-                    <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-[#A3363D] border border-[#FFE9B8] shrink-0 animate-pulse mt-0.5 sm:mt-0">
-                        <StarDecor className="w-4 h-4 text-[#FFE9B8]" />
-                    </span>
-                    <div className="min-w-0">
-                        <p className="leading-snug">
-                            <strong className="text-[#FFE9B8] uppercase tracking-wide text-xs md:text-sm mr-1.5">
-                                Pincelín está en:
-                            </strong>
-                            <strong className="text-white font-bold">
-                                {activeClass.titulo}
-                            </strong>
-                        </p>
-                        <p className="text-xs sm:text-sm text-[#FFE9B8] font-semibold mt-0.5">
-                            Con{' '}
-                            {activeClass.ponentes.map((p, idx) => (
-                                <span key={p.nombre} className="whitespace-nowrap">
-                                    {idx > 0 ? ', ' : ''}
-                                    {p.nombre}
-                                </span>
-                            ))}
-                        </p>
+            {/* Franja inferior indicando dónde está Pincelín (por día/hora) y, si aplica, el taller que consulta la alumna */}
+            <div className="relative z-10 mt-5 rounded-2xl border-2 px-4 py-3.5 bg-[#2E4F35] text-white animate-attention-glow space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div className="flex items-start sm:items-center gap-2.5 text-sm md:text-base min-w-0">
+                        <span
+                            className={`inline-flex items-center justify-center w-7 h-7 rounded-full border border-[#FFE9B8] shrink-0 mt-0.5 sm:mt-0 ${
+                                isLiveNow ? 'bg-[#A3363D] animate-pulse' : 'bg-[#A3363D]'
+                            }`}
+                        >
+                            <StarDecor className="w-4 h-4 text-[#FFE9B8]" />
+                        </span>
+                        <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                                {isLiveNow && (
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#A3363D] border border-[#FFE9B8]/70 text-white text-[11px] font-extrabold uppercase tracking-wider animate-pulse">
+                                        <span className="relative flex h-2 w-2">
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
+                                            <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
+                                        </span>
+                                        <span>CLASE EN VIVO</span>
+                                    </span>
+                                )}
+
+                                {!isLiveNow && isPincelinRecordingReady && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#3F6B45] border border-[#FFE9B8]/60 text-[#FFE9B8] text-[11px] font-bold">
+                                        <span>🎬 Grabación disponible</span>
+                                    </span>
+                                )}
+
+                                {!isLiveNow && !isPincelinRecordingReady && (
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#243E29] border border-[#CFE5D2]/35 text-[#FFE9B8] text-[11px] font-bold">
+                                        {statusBadgeText}
+                                    </span>
+                                )}
+                            </div>
+
+                            <p className="leading-snug mt-1">
+                                <strong className="text-[#FFE9B8] uppercase tracking-wide text-xs md:text-sm mr-1.5">
+                                    Pincelín está en:
+                                </strong>
+                                <strong className="text-white font-bold">
+                                    {pincelinClass.titulo}
+                                </strong>
+                            </p>
+                            <p className="text-xs sm:text-sm text-[#FFE9B8] font-semibold mt-0.5">
+                                Con{' '}
+                                {pincelinClass.ponentes.map((p, idx) => (
+                                    <span key={p.nombre} className="whitespace-nowrap">
+                                        {idx > 0 ? ', ' : ''}
+                                        {p.nombre}
+                                    </span>
+                                ))}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col sm:items-end gap-1 pl-9 sm:pl-0 shrink-0">
+                        <span className="text-xs font-bold text-[#FFE9B8] sm:text-right">
+                            {scheduleHintText}
+                        </span>
+                        {isViewingOtherClass && (
+                            <button
+                                type="button"
+                                onClick={() => onSelectClass(pincelinClass.id)}
+                                className="self-start sm:self-end text-[11px] font-bold px-3 py-1 rounded-full bg-[#FFFDF7] text-[#A3363D] hover:bg-[#FFE9B8] transition-colors"
+                            >
+                                Ver taller donde está Pincelín →
+                            </button>
+                        )}
                     </div>
                 </div>
-                <span className="text-xs font-bold text-[#FFE9B8] whitespace-nowrap sm:text-right pl-9 sm:pl-0">
-                    {activeClass.horarioConfirmado ? `${activeClass.date} · ${activeClass.time}` : 'Horario oficial por confirmar'}
-                </span>
+
+                {/* Indicador claro cuando la alumna está consultando otro taller distinto al de Pincelín */}
+                {isViewingOtherClass && (
+                    <div className="pt-2.5 border-t border-white/15 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
+                            <span className="font-bold uppercase tracking-wider text-[#CFE5D2]">
+                                Consultando ficha:
+                            </span>
+                            <span className="font-bold text-white truncate">
+                                {selectedClass.titulo}
+                            </span>
+                        </div>
+                        <span
+                            className={`self-start sm:self-auto px-2.5 py-0.5 rounded-full font-bold text-[11px] whitespace-nowrap ${
+                                selectedClassStatus.type === 'live'
+                                    ? 'bg-[#A3363D] text-white'
+                                    : selectedClassStatus.type === 'recording'
+                                      ? 'bg-[#3F6B45] text-[#FFE9B8] border border-[#FFE9B8]/40'
+                                      : 'bg-[#243E29] text-[#FFE9B8]'
+                            }`}
+                        >
+                            {selectedClassStatus.type === 'recording'
+                                ? '🎬 Grabación disponible'
+                                : selectedClassStatus.type === 'live'
+                                  ? '● CLASE EN VIVO'
+                                  : selectedClassStatus.label}
+                        </span>
+                    </div>
+                )}
             </div>
         </section>
     );

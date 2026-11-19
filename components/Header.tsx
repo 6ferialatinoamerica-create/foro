@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { Clase, VerifiedStudentSession } from '../types';
+import type { Clase, RecordingStatusMap, VerifiedStudentSession } from '../types';
 import { GLOBAL_CONFIG } from '../constants';
 import CountdownTimer from './CountdownTimer';
 import PincelinPath from './PincelinPath';
@@ -11,6 +11,7 @@ interface HeaderProps {
     onSelectClass: (id: string) => void;
     currentTime: Date;
     completedClassIds: string[];
+    recordingStatuses: RecordingStatusMap;
     studentSession: VerifiedStudentSession | null;
     isBlocked: boolean;
     onOpenStudentAccess: () => void;
@@ -38,6 +39,7 @@ const Header: React.FC<HeaderProps> = ({
     onSelectClass,
     currentTime,
     completedClassIds,
+    recordingStatuses,
     studentSession,
     isBlocked,
     onOpenStudentAccess,
@@ -185,6 +187,7 @@ const Header: React.FC<HeaderProps> = ({
                         onSelectClass={onSelectClass}
                         currentTime={currentTime}
                         completedClassIds={completedClassIds}
+                        recordingStatuses={recordingStatuses}
                     />
                 </div>
             </div>

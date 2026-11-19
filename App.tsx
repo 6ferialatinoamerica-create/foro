@@ -29,6 +29,7 @@ import StudentAccessModal from './components/StudentAccessModal';
 import AdminPortalModal from './components/AdminPortalModal';
 import PincelinIntro from './components/PincelinIntro';
 import LegalModal, { type LegalDocumentType } from './components/LegalModal';
+import { resolvePincelinPosition } from './utils/pincelinSchedule';
 
 const COMPLETED_STORAGE_KEY = 'territorio_canva_6ta_completed_v1';
 
@@ -42,7 +43,9 @@ const readGuestCompleted = (): string[] => {
 };
 
 const App: React.FC = () => {
-    const [selectedClassId, setSelectedClassId] = useState<string>(classData[0].id);
+    const [selectedClassId, setSelectedClassId] = useState<string>(
+        () => resolvePincelinPosition(classData, new Date(), {}).pincelinClass.id
+    );
     const currentTime = useCurrentTime(5000);
 
     const [studentSession, setStudentSession] = useState<VerifiedStudentSession | null>(() =>
@@ -314,6 +317,7 @@ const App: React.FC = () => {
                     onSelectClass={setSelectedClassId}
                     currentTime={currentTime}
                     completedClassIds={completedClassIds}
+                    recordingStatuses={recordingStatuses}
                     studentSession={studentSession}
                     isBlocked={Boolean(blockAlert)}
                     onOpenStudentAccess={handleOpenStudentAccessFromHeader}
