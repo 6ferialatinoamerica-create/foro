@@ -307,7 +307,7 @@ const ClassCard: React.FC<ClassCardProps> = ({
                                 Pase activo · {studentSession.email}
                             </span>
                             <span className="tabular-nums shrink-0">
-                                {studentSession.activeDevicesCount}/{studentSession.maxDevices} equipos en misma IP
+                                {studentSession.activeDevicesCount}/{studentSession.maxDevices} equipos personales
                             </span>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
@@ -340,7 +340,7 @@ const ClassCard: React.FC<ClassCardProps> = ({
                 ) : (
                     <p className="text-center text-xs font-medium text-[#2B2B2B]/75">
                         {isBlocked
-                            ? 'Acceso restringido por seguridad hasta verificar dispositivo e IP autorizada.'
+                            ? 'Tu pase alcanzó el límite de equipos personales. Toca el botón de abajo para activar este equipo.'
                             : 'Acceso exclusivo para alumnas inscritas · Valida tu correo para activar o entrar a ClassOnLive.'}
                     </p>
                 )}

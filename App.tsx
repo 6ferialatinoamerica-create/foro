@@ -57,6 +57,7 @@ const App: React.FC = () => {
     });
 
     const [blockAlert, setBlockAlert] = useState<AccessVerificationResult | null>(null);
+    const [blockedCredentials, setBlockedCredentials] = useState<{ email: string; password: string } | null>(null);
     const [accessModalOpen, setAccessModalOpen] = useState(false);
     const [targetClassTitle, setTargetClassTitle] = useState<string | undefined>(undefined);
     const [adminModalOpen, setAdminModalOpen] = useState(false);
@@ -93,7 +94,7 @@ const App: React.FC = () => {
         document.getElementById('talleres-navidenos')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, []);
 
-    // Revalidación silenciosa al abrir la app: comprueba misma IP y límite de 2 dispositivos
+    // Revalidación silenciosa al abrir la app: comprueba país y límite de 2 dispositivos personales
     useEffect(() => {
         const saved = getSavedStudentSession();
         if (!saved) return;
@@ -110,13 +111,19 @@ const App: React.FC = () => {
                     setStudentSession(res.student);
                     setCompletedClassIds(res.student.completedClassIds || []);
                     setBlockAlert(null);
+                    setBlockedCredentials(null);
                 } else if (res.status === 'BLOCKED_MAX_DEVICES' || res.status === 'BLOCKED_GEO') {
+                    setBlockedCredentials({
+                        email: saved.email,
+                        password: saved.classroomPassword || saved.purchaseCode,
+                    });
                     clearStudentSessionLocally();
                     setStudentSession(null);
                     setBlockAlert(res);
                 } else if (res.status === 'INVALID_CREDENTIALS' || res.status === 'INACTIVE') {
                     clearStudentSessionLocally();
                     setStudentSession(null);
+                    setBlockedCredentials(null);
                 }
             })
             .catch(() => {
@@ -203,6 +210,10 @@ const App: React.FC = () => {
                     freshCheck.status === 'BLOCKED_MAX_DEVICES' ||
                     freshCheck.status === 'BLOCKED_GEO'
                 ) {
+                    setBlockedCredentials({
+                        email: studentSession.email,
+                        password: studentSession.classroomPassword || studentSession.purchaseCode,
+                    });
                     clearStudentSessionLocally();
                     setStudentSession(null);
                     setBlockAlert(freshCheck);
@@ -233,6 +244,10 @@ const App: React.FC = () => {
             }).catch(() => null);
 
             if (freshCheck && (freshCheck.status === 'BLOCKED_MAX_DEVICES' || freshCheck.status === 'BLOCKED_GEO')) {
+                setBlockedCredentials({
+                    email: studentSession.email,
+                    password: studentSession.classroomPassword || studentSession.purchaseCode,
+                });
                 clearStudentSessionLocally();
                 setStudentSession(null);
                 setBlockAlert(freshCheck);
@@ -258,6 +273,7 @@ const App: React.FC = () => {
         setStudentSession(session);
         setCompletedClassIds(session.completedClassIds || []);
         setBlockAlert(null);
+        setBlockedCredentials(null);
     };
 
     const handleStudentBlocked = (alertResult: AccessVerificationResult) => {
@@ -271,6 +287,7 @@ const App: React.FC = () => {
         setStudentSession(null);
         setCompletedClassIds(readGuestCompleted());
         setBlockAlert(null);
+        setBlockedCredentials(null);
     };
 
     return (
@@ -279,7 +296,7 @@ const App: React.FC = () => {
             style={{ backgroundColor: GLOBAL_CONFIG.FONDO_GRADIENTE }}
         >
             {showIntro && <PincelinIntro onFinish={handleFinishIntro} />}
-            <Snowfall aboveIntro={showIntro} />
+            {!showIntro && <Snowfall />}
             {confettiBurst > 0 && <Confetti key={confettiBurst} />}
 
             {/* Cintillo superior fijo mientras se hace scroll */}
@@ -641,10 +658,14 @@ const App: React.FC = () => {
                 onClose={() => setAccessModalOpen(false)}
                 studentSession={studentSession}
                 blockAlert={blockAlert}
+                blockedCredentials={blockedCredentials}
                 targetClassTitle={targetClassTitle}
                 onVerified={handleStudentVerified}
                 onBlocked={handleStudentBlocked}
-                onClearBlock={() => setBlockAlert(null)}
+                onClearBlock={() => {
+                    setBlockAlert(null);
+                    setBlockedCredentials(null);
+                }}
                 onLogout={handleStudentLogout}
             />
 

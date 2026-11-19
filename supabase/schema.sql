@@ -55,6 +55,8 @@ create table if not exists public.enrolled_students (
     is_active boolean not null default true,
     needs_password_setup boolean not null default false,
     completed_class_ids jsonb not null default '[]'::jsonb,
+    device_swaps_count integer not null default 0,
+    device_swaps_reset_at timestamptz,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
@@ -63,7 +65,9 @@ alter table public.enrolled_students
     alter column purchase_code set default '',
     add column if not exists primary_ip text,
     add column if not exists needs_password_setup boolean not null default false,
-    add column if not exists completed_class_ids jsonb not null default '[]'::jsonb;
+    add column if not exists completed_class_ids jsonb not null default '[]'::jsonb,
+    add column if not exists device_swaps_count integer not null default 0,
+    add column if not exists device_swaps_reset_at timestamptz;
 
 create index if not exists idx_enrolled_students_email_lower
     on public.enrolled_students (lower(email));
@@ -357,6 +361,9 @@ declare
     v_device public.student_devices%rowtype;
     v_auth_count integer := 0;
     v_total_devices integer := 0;
+    v_swaps_used integer := 0;
+    v_remaining_swaps integer := 2;
+    v_active_devices jsonb := '[]'::jsonb;
     v_countries text[] := '{}';
     v_ips text[] := '{}';
 begin
@@ -415,74 +422,7 @@ begin
         v_student.primary_country := v_country;
     end if;
 
-    -- Bloqueo estricto por IP distinta (los 2 equipos permitidos deben compartir la misma IP)
-    if v_student.primary_ip is not null
-       and trim(v_student.primary_ip) <> ''
-       and v_ip <> ''
-       and v_student.primary_ip <> v_ip then
-
-        insert into public.student_devices (
-            student_id, device_id, device_label, ip_address, country_code, city, is_authorized
-        )
-        values (
-            v_student.id, v_device_id, v_device_label, v_ip, v_country, v_city, false
-        )
-        on conflict (student_id, device_id) do update
-        set device_label = excluded.device_label,
-            ip_address = excluded.ip_address,
-            country_code = excluded.country_code,
-            city = excluded.city,
-            is_authorized = false,
-            last_seen_at = now();
-
-        select count(*)::integer into v_total_devices
-        from public.student_devices
-        where student_id = v_student.id;
-
-        select array_agg(distinct c)
-        into v_countries
-        from (
-            select upper(country_code) as c from public.student_devices
-            where student_id = v_student.id and trim(country_code) <> ''
-            union
-            select upper(v_student.primary_country) as c where v_student.primary_country is not null and trim(v_student.primary_country) <> ''
-        ) sub;
-
-        select array_agg(distinct ip_val)
-        into v_ips
-        from (
-            select trim(ip_address) as ip_val from public.student_devices
-            where student_id = v_student.id and trim(ip_address) <> ''
-            union
-            select trim(v_student.primary_ip) as ip_val where trim(v_student.primary_ip) <> ''
-        ) sub_ip;
-
-        insert into public.device_access_alerts (
-            student_id, email, full_name, detected_devices_count, countries_seen, ips_seen,
-            attempted_device_id, attempted_device_label, attempted_ip, attempted_country, reason
-        ) values (
-            v_student.id, v_student.email, v_student.full_name, v_total_devices, coalesce(v_countries, '{}'), coalesce(v_ips, '{}'),
-            v_device_id, v_device_label, v_ip, v_country, 'IP_MISMATCH'
-        );
-
-        return jsonb_build_object(
-            'ok', false,
-            'status', 'BLOCKED_GEO',
-            'reason', 'IP_MISMATCH',
-            'detectedDevicesCount', v_total_devices,
-            'maxDevices', v_student.max_devices,
-            'primaryCountry', coalesce(v_student.primary_country, ''),
-            'attemptedCountry', v_country,
-            'countriesSeen', coalesce(v_countries, '{}'::text[]),
-            'primaryIp', v_student.primary_ip,
-            'attemptedIp', v_ip,
-            'ipsSeen', coalesce(v_ips, '{}'::text[]),
-            'message', format(
-                'Alerta de seguridad: este acceso solo está permitido hasta en %s dispositivos conectados desde la misma IP (%s). Se bloqueó el intento desde otra IP (%s).',
-                v_student.max_devices, v_student.primary_ip, v_ip
-            )
-        );
-    end if;
+    -- Nota: Ya NO bloqueamos por cambio de IP dentro del mismo país para no afectar a quienes usan datos móviles, trabajo o sufren cortes de luz.
 
     -- Bloqueo geográfico de respaldo si no se obtuvo IP pero sí países distintos
     if v_student.primary_country is not null
@@ -624,7 +564,7 @@ begin
         return jsonb_build_object(
             'ok', true,
             'status', 'VERIFIED',
-            'message', 'Dispositivo autorizado en tu IP. Tus datos quedan guardados para entrar directo.',
+            'message', 'Dispositivo autorizado. Ya puedes entrar directo a ClassOnLive desde casa, datos móviles o tu trabajo.',
             'student', jsonb_build_object(
                 'studentId', v_student.id,
                 'email', v_student.email,
@@ -641,7 +581,29 @@ begin
         );
     end if;
 
-    -- Excedió el máximo de 2 dispositivos: bloquear y emitir alerta con conteo X
+    -- Excedió el máximo de dispositivos personales permitidos: ofrecer auto-relevo si tiene cambios semanales disponibles
+    if v_student.device_swaps_reset_at is null or now() - v_student.device_swaps_reset_at > interval '7 days' then
+        v_swaps_used := 0;
+    else
+        v_swaps_used := greatest(0, coalesce(v_student.device_swaps_count, 0));
+    end if;
+    v_remaining_swaps := greatest(0, 2 - v_swaps_used);
+
+    select coalesce(
+        jsonb_agg(
+            jsonb_build_object(
+                'deviceLabel', d.device_label,
+                'lastSeenAt', d.last_seen_at
+            )
+            order by d.last_seen_at asc
+        ),
+        '[]'::jsonb
+    )
+    into v_active_devices
+    from public.student_devices d
+    where d.student_id = v_student.id
+      and d.is_authorized = true;
+
     insert into public.student_devices (
         student_id, device_id, device_label, ip_address, country_code, city, is_authorized
     )
@@ -678,29 +640,215 @@ begin
         select trim(v_student.primary_ip) as ip_val where v_student.primary_ip is not null and trim(v_student.primary_ip) <> ''
     ) sub_ip;
 
-    insert into public.device_access_alerts (
-        student_id, email, full_name, detected_devices_count, countries_seen, ips_seen,
-        attempted_device_id, attempted_device_label, attempted_ip, attempted_country, reason
-    ) values (
-        v_student.id, v_student.email, v_student.full_name, v_total_devices, coalesce(v_countries, '{}'), coalesce(v_ips, '{}'),
-        v_device_id, v_device_label, v_ip, v_country, 'MAX_DEVICES'
-    );
+    if v_remaining_swaps <= 0 then
+        insert into public.device_access_alerts (
+            student_id, email, full_name, detected_devices_count, countries_seen, ips_seen,
+            attempted_device_id, attempted_device_label, attempted_ip, attempted_country, reason
+        ) values (
+            v_student.id, v_student.email, v_student.full_name, v_total_devices, coalesce(v_countries, '{}'), coalesce(v_ips, '{}'),
+            v_device_id, v_device_label, v_ip, v_country, 'MAX_DEVICES'
+        );
+    end if;
 
     return jsonb_build_object(
         'ok', false,
         'status', 'BLOCKED_MAX_DEVICES',
         'reason', 'MAX_DEVICES',
-        'detectedDevicesCount', v_total_devices,
+        'detectedDevicesCount', v_auth_count,
         'maxDevices', v_student.max_devices,
+        'canSelfReplace', v_remaining_swaps > 0,
+        'remainingReplacements', v_remaining_swaps,
+        'activeDevices', v_active_devices,
         'primaryCountry', coalesce(v_student.primary_country, ''),
         'attemptedCountry', v_country,
         'countriesSeen', coalesce(v_countries, '{}'::text[]),
         'primaryIp', coalesce(v_student.primary_ip, ''),
         'attemptedIp', v_ip,
         'ipsSeen', coalesce(v_ips, '{}'::text[]),
-        'message', format(
-            'Alerta de seguridad: se detectaron %s dispositivos intentando usar esta clave. El máximo permitido es %s dispositivos en la misma IP.',
-            v_total_devices, v_student.max_devices
+        'message', case
+            when v_remaining_swaps > 0 then format(
+                'Tu pase ya está activo en %s equipos personales. Para proteger tu cuenta, puedes reemplazar el equipo más antiguo con 1 clic y entrar desde este dispositivo.',
+                v_student.max_devices
+            )
+            else format(
+                'Ya utilizaste tus cambios de equipo de esta semana y alcanzaste el límite de %s dispositivos. Escríbenos a soporte para restablecer tus accesos.',
+                v_student.max_devices
+            )
+        end
+    );
+end;
+$$;
+
+create or replace function public.replace_student_device(
+    p_email text,
+    p_purchase_code text,
+    p_device_id text,
+    p_device_label text default 'Dispositivo',
+    p_ip_address text default '',
+    p_country_code text default '',
+    p_city text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+    v_email text := lower(trim(coalesce(p_email, '')));
+    v_raw_code text := trim(coalesce(p_purchase_code, ''));
+    v_code text := upper(v_raw_code);
+    v_device_id text := trim(coalesce(p_device_id, ''));
+    v_device_label text := left(trim(coalesce(p_device_label, 'Dispositivo')), 120);
+    v_ip text := regexp_replace(left(trim(coalesce(p_ip_address, '')), 64), '^::ffff:', '');
+    v_country text := upper(left(trim(coalesce(p_country_code, '')), 8));
+    v_city text := left(trim(coalesce(p_city, '')), 100);
+    v_student public.enrolled_students%rowtype;
+    v_swaps_used integer := 0;
+    v_reset_at timestamptz;
+    v_oldest_device_id uuid;
+    v_auth_count integer := 0;
+begin
+    if v_ip = '::1' then
+        v_ip := '127.0.0.1';
+    end if;
+
+    if v_email = '' or v_raw_code = '' or v_device_id = '' then
+        return jsonb_build_object(
+            'ok', false,
+            'status', 'INVALID_CREDENTIALS',
+            'message', 'Ingresa tu correo electrónico de compra y tu clave de acceso para activar este equipo.'
+        );
+    end if;
+
+    select *
+    into v_student
+    from public.enrolled_students
+    where lower(email) = v_email
+      and (
+          upper(purchase_code) = v_code
+          or (trim(classroom_password) <> '' and trim(classroom_password) = v_raw_code)
+      )
+    limit 1;
+
+    if not found then
+        return jsonb_build_object(
+            'ok', false,
+            'status', 'INVALID_CREDENTIALS',
+            'message', 'Tus datos de correo o clave no coinciden con tu inscripción.'
+        );
+    end if;
+
+    if not v_student.is_active then
+        return jsonb_build_object(
+            'ok', false,
+            'status', 'INACTIVE',
+            'message', 'Tu pase se encuentra suspendido temporalmente. Contacta al equipo de soporte.'
+        );
+    end if;
+
+    if v_student.primary_country is not null
+       and trim(v_student.primary_country) <> ''
+       and v_country <> ''
+       and upper(v_student.primary_country) <> v_country then
+        return jsonb_build_object(
+            'ok', false,
+            'status', 'BLOCKED_GEO',
+            'reason', 'COUNTRY_MISMATCH',
+            'primaryCountry', v_student.primary_country,
+            'attemptedCountry', v_country,
+            'message', format(
+                'Por seguridad, detectamos este intento desde un país distinto al de tu registro (%s vs %s). Escríbenos a soporte si estás de viaje.',
+                v_student.primary_country, v_country
+            )
+        );
+    end if;
+
+    if v_student.device_swaps_reset_at is null or now() - v_student.device_swaps_reset_at > interval '7 days' then
+        v_swaps_used := 0;
+        v_reset_at := now();
+    else
+        v_swaps_used := greatest(0, coalesce(v_student.device_swaps_count, 0));
+        v_reset_at := v_student.device_swaps_reset_at;
+    end if;
+
+    if v_swaps_used >= 2 then
+        return jsonb_build_object(
+            'ok', false,
+            'status', 'BLOCKED_MAX_DEVICES',
+            'reason', 'MAX_DEVICES',
+            'maxDevices', v_student.max_devices,
+            'canSelfReplace', false,
+            'remainingReplacements', 0,
+            'message', 'Ya utilizaste tus 2 cambios rápidos de equipo de esta semana. Contacta a soporte para restablecer tus dispositivos.'
+        );
+    end if;
+
+    if not exists (
+        select 1 from public.student_devices
+        where student_id = v_student.id and device_id = v_device_id and is_authorized = true
+    ) then
+        select id into v_oldest_device_id
+        from public.student_devices
+        where student_id = v_student.id
+          and is_authorized = true
+        order by last_seen_at asc, first_seen_at asc
+        limit 1;
+
+        if v_oldest_device_id is not null then
+            update public.student_devices
+            set is_authorized = false
+            where id = v_oldest_device_id;
+        end if;
+
+        insert into public.student_devices (
+            student_id, device_id, device_label, ip_address, country_code, city, is_authorized
+        )
+        values (
+            v_student.id, v_device_id, v_device_label, v_ip, v_country, v_city, true
+        )
+        on conflict (student_id, device_id) do update
+        set device_label = excluded.device_label,
+            ip_address = excluded.ip_address,
+            country_code = excluded.country_code,
+            city = excluded.city,
+            is_authorized = true,
+            last_seen_at = now();
+
+        update public.enrolled_students
+        set device_swaps_count = v_swaps_used + 1,
+            device_swaps_reset_at = v_reset_at,
+            updated_at = now()
+        where id = v_student.id;
+
+        insert into public.app_activity_logs (event_type, actor_email, actor_name, country_code)
+        values (
+            'student_login',
+            v_student.email,
+            v_student.full_name,
+            coalesce(nullif(v_country, ''), coalesce(v_student.primary_country, ''))
+        );
+    end if;
+
+    select count(*)::integer into v_auth_count
+    from public.student_devices
+    where student_id = v_student.id and is_authorized = true;
+
+    return jsonb_build_object(
+        'ok', true,
+        'status', 'VERIFIED',
+        'message', '¡Listo! Activamos este equipo como parte de tus dispositivos autorizados.',
+        'student', jsonb_build_object(
+            'studentId', v_student.id,
+            'email', v_student.email,
+            'fullName', v_student.full_name,
+            'purchaseCode', v_student.purchase_code,
+            'classroomPassword', case when trim(v_student.classroom_password) <> '' then v_student.classroom_password else v_raw_code end,
+            'classroomUrl', v_student.classroom_url,
+            'primaryCountry', coalesce(v_student.primary_country, v_country, ''),
+            'primaryIp', coalesce(v_student.primary_ip, v_ip, ''),
+            'activeDevicesCount', v_auth_count,
+            'maxDevices', v_student.max_devices,
+            'completedClassIds', coalesce(v_student.completed_class_ids, '[]'::jsonb)
         )
     );
 end;
@@ -2131,6 +2279,7 @@ grant execute on function public.admin_delete_forum_question(text, text, uuid) t
 grant execute on function public.admin_update_forum_question(text, text, uuid, text, text, text) to anon, authenticated;
 grant execute on function public.admin_update_forum_reply(text, text, uuid, text) to anon, authenticated;
 grant execute on function public.admin_delete_forum_reply(text, text, uuid) to anon, authenticated;
+grant execute on function public.replace_student_device(text, text, text, text, text, text, text) to anon, authenticated;
 
 -- =====================================================================
 -- 6. ORGANIZADORES PRE-AUTORIZADOS Y ALUMNA DE PRUEBA REAL

@@ -30,6 +30,8 @@ interface LocalDeviceEntry {
 
 interface LocalStudentEntry extends AdminStudentRecord {
     devices: LocalDeviceEntry[];
+    deviceSwapsCount?: number;
+    deviceSwapsResetAt?: string | null;
 }
 
 interface LocalAdminEntry {
@@ -250,6 +252,8 @@ const normalizeLocalDb = (raw: LocalDbState): {
               needsPasswordSetup: Boolean(s.needsPasswordSetup),
               completedClassIds: Array.isArray(s.completedClassIds) ? s.completedClassIds : [],
               devices: Array.isArray(s.devices) ? s.devices : [],
+              deviceSwapsCount: typeof s.deviceSwapsCount === 'number' ? s.deviceSwapsCount : 0,
+              deviceSwapsResetAt: s.deviceSwapsResetAt ?? null,
           }))
         : [];
 
@@ -737,71 +741,7 @@ export async function verifyStudentAccess(params: {
         student.primaryCountry = simulatedCountry;
     }
 
-    // 1. Bloqueo estricto si la IP detectada es diferente a la IP autorizada de la alumna
-    if (student.primaryIp && detectedIp && student.primaryIp !== detectedIp) {
-        const existingDev = student.devices.find((d) => d.deviceId === deviceId);
-        if (existingDev) {
-            existingDev.isAuthorized = false;
-            existingDev.ipAddress = detectedIp;
-            existingDev.countryCode = simulatedCountry;
-            existingDev.lastSeenAt = new Date().toISOString();
-        } else {
-            student.devices.push({
-                deviceId,
-                deviceLabel,
-                ipAddress: detectedIp,
-                countryCode: simulatedCountry,
-                isAuthorized: false,
-                lastSeenAt: new Date().toISOString(),
-            });
-        }
-
-        const totalDevices = student.devices.length;
-        student.totalDevicesCount = totalDevices;
-
-        const ipsSeen = Array.from(
-            new Set([student.primaryIp, ...student.devices.map((d) => d.ipAddress).filter(Boolean)])
-        );
-        const countriesSeen = Array.from(
-            new Set(
-                [student.primaryCountry || '', ...student.devices.map((d) => d.countryCode)].filter(
-                    Boolean
-                )
-            )
-        );
-
-        db.alerts.unshift({
-            id: `alert_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            studentId: student.id,
-            email: student.email,
-            fullName: student.fullName,
-            detectedDevicesCount: totalDevices,
-            countriesSeen,
-            ipsSeen,
-            attemptedDeviceLabel: deviceLabel,
-            attemptedIp: detectedIp,
-            attemptedCountry: simulatedCountry,
-            reason: 'IP_MISMATCH',
-            resolved: false,
-            createdAt: new Date().toISOString(),
-        });
-        writeLocalDb(db);
-
-        return {
-            ok: false,
-            status: 'BLOCKED_GEO',
-            reason: 'IP_MISMATCH',
-            detectedDevicesCount: totalDevices,
-            maxDevices: student.maxDevices,
-            primaryCountry: student.primaryCountry || '',
-            attemptedCountry: simulatedCountry,
-            countriesSeen,
-            primaryIp: student.primaryIp,
-            attemptedIp: detectedIp,
-            ipsSeen,
-            message: `Alerta de seguridad: este acceso solo está permitido hasta en ${student.maxDevices} dispositivos conectados desde la misma IP (${student.primaryIp}). Se bloqueó el intento desde otra IP (${detectedIp}).`,
-        };
-    }
+    // Nota: Ya no bloqueamos por cambio de IP dentro del mismo país para no afectar a quienes usan datos móviles, trabajo o sufren cortes de luz.
 
     // 2. Bloqueo geográfico de respaldo si cambian países explícitos
     if (student.primaryCountry && simulatedCountry && student.primaryCountry !== simulatedCountry) {
@@ -923,12 +863,22 @@ export async function verifyStudentAccess(params: {
         return {
             ok: true,
             status: 'VERIFIED',
-            message: 'Dispositivo autorizado en tu IP. Tus datos quedan guardados para copiar y entrar a ClassOnLive.',
+            message: 'Dispositivo autorizado. Ya puedes entrar directo a ClassOnLive desde casa, datos móviles o tu trabajo.',
             student: session,
         };
     }
 
-    // 3. Excedió el límite de 2 dispositivos: bloquear y registrar alerta para el admin
+    // 3. Excedió el límite de dispositivos personales: calcular si tiene cambios rápidos disponibles (máx. 2 cada 7 días)
+    const nowMs = Date.now();
+    const resetAtMs = student.deviceSwapsResetAt ? new Date(student.deviceSwapsResetAt).getTime() : 0;
+    const windowExpired = !resetAtMs || Number.isNaN(resetAtMs) || nowMs - resetAtMs > 7 * 24 * 60 * 60 * 1000;
+    const swapsUsed = windowExpired ? 0 : Math.max(0, student.deviceSwapsCount || 0);
+    const remainingReplacements = Math.max(0, 2 - swapsUsed);
+    const activeDevices = student.devices
+        .filter((d) => d.isAuthorized)
+        .sort((a, b) => new Date(a.lastSeenAt).getTime() - new Date(b.lastSeenAt).getTime())
+        .map((d) => ({ deviceLabel: d.deviceLabel, lastSeenAt: d.lastSeenAt }));
+
     const alreadyRecorded = student.devices.find((d) => d.deviceId === deviceId);
     if (alreadyRecorded) {
         alreadyRecorded.ipAddress = detectedIp;
@@ -954,36 +904,207 @@ export async function verifyStudentAccess(params: {
         new Set([student.primaryIp || '', ...student.devices.map((d) => d.ipAddress)].filter(Boolean))
     );
 
-    db.alerts.unshift({
-        id: `alert_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        studentId: student.id,
-        email: student.email,
-        fullName: student.fullName,
-        detectedDevicesCount: totalDevices,
-        countriesSeen,
-        ipsSeen,
-        attemptedDeviceLabel: deviceLabel,
-        attemptedIp: detectedIp,
-        attemptedCountry: simulatedCountry,
-        reason: 'MAX_DEVICES',
-        resolved: false,
-        createdAt: new Date().toISOString(),
-    });
+    if (remainingReplacements <= 0) {
+        db.alerts.unshift({
+            id: `alert_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            studentId: student.id,
+            email: student.email,
+            fullName: student.fullName,
+            detectedDevicesCount: totalDevices,
+            countriesSeen,
+            ipsSeen,
+            attemptedDeviceLabel: deviceLabel,
+            attemptedIp: detectedIp,
+            attemptedCountry: simulatedCountry,
+            reason: 'MAX_DEVICES',
+            resolved: false,
+            createdAt: new Date().toISOString(),
+        });
+    }
     writeLocalDb(db);
 
     return {
         ok: false,
         status: 'BLOCKED_MAX_DEVICES',
         reason: 'MAX_DEVICES',
-        detectedDevicesCount: totalDevices,
+        detectedDevicesCount: activeDevices.length || authorizedCount,
         maxDevices: student.maxDevices,
+        canSelfReplace: remainingReplacements > 0,
+        remainingReplacements,
+        activeDevices,
         primaryCountry: student.primaryCountry || simulatedCountry,
         attemptedCountry: simulatedCountry,
         countriesSeen,
         primaryIp: student.primaryIp || detectedIp,
         attemptedIp: detectedIp,
         ipsSeen,
-        message: `Alerta de seguridad: se detectaron ${totalDevices} dispositivos intentando usar esta clave. El máximo permitido es ${student.maxDevices} dispositivos en la misma IP.`,
+        message:
+            remainingReplacements > 0
+                ? `Tu pase ya está activo en ${student.maxDevices} equipos personales. Para proteger tu cuenta, puedes reemplazar el equipo más antiguo con 1 clic y entrar desde este dispositivo.`
+                : `Ya utilizaste tus cambios de equipo de esta semana y alcanzaste el límite de ${student.maxDevices} dispositivos. Escríbenos a soporte para restablecer tus accesos.`,
+    };
+}
+
+export async function replaceStudentDevice(params: {
+    email: string;
+    purchaseCode: string;
+    deviceIdOverride?: string;
+    countryOverride?: string;
+    ipOverride?: string;
+}): Promise<AccessVerificationResult> {
+    const deviceId = params.deviceIdOverride || getOrCreateDeviceId();
+    const deviceLabel = getDeviceLabel();
+    const cleanEmail = params.email.trim().toLowerCase();
+    const rawCredential = params.purchaseCode.trim();
+    const upperCredential = rawCredential.toUpperCase();
+
+    if (isSupabaseConfigured) {
+        const result = await postJson<AccessVerificationResult>('/api/verify-access', {
+            action: 'replace_device',
+            email: cleanEmail,
+            purchaseCode: rawCredential,
+            deviceId,
+            deviceLabel,
+        });
+
+        if (result.ok && result.student) {
+            const mergedStudent: VerifiedStudentSession = {
+                ...result.student,
+                classroomPassword: result.student.classroomPassword || rawCredential,
+                primaryIp: result.student.primaryIp || '',
+                completedClassIds: Array.isArray(result.student.completedClassIds)
+                    ? result.student.completedClassIds
+                    : [],
+                verifiedAt: new Date().toISOString(),
+            };
+            saveStudentSessionLocally(mergedStudent);
+            return { ...result, student: mergedStudent };
+        }
+        return result;
+    }
+
+    const db = readLocalDb();
+    const student = db.students.find((s) => {
+        if (s.email.toLowerCase() !== cleanEmail) return false;
+        const matchesCode = Boolean(s.purchaseCode) && s.purchaseCode.toUpperCase() === upperCredential;
+        const matchesPass = Boolean(s.classroomPassword) && s.classroomPassword.trim() === rawCredential;
+        return matchesCode || matchesPass;
+    });
+
+    if (!student) {
+        return {
+            ok: false,
+            status: 'INVALID_CREDENTIALS',
+            message: 'Tus datos de correo o clave no coinciden con tu inscripción.',
+        };
+    }
+
+    if (!student.isActive) {
+        return {
+            ok: false,
+            status: 'INACTIVE',
+            message: 'Tu pase se encuentra suspendido temporalmente. Contacta al equipo de soporte.',
+        };
+    }
+
+    const simulatedCountry = (params.countryOverride || student.primaryCountry || '').toUpperCase();
+    if (student.primaryCountry && simulatedCountry && student.primaryCountry !== simulatedCountry) {
+        return {
+            ok: false,
+            status: 'BLOCKED_GEO',
+            reason: 'COUNTRY_MISMATCH',
+            primaryCountry: student.primaryCountry,
+            attemptedCountry: simulatedCountry,
+            message: `Por seguridad, detectamos este intento desde un país distinto al de tu registro (${student.primaryCountry} vs ${simulatedCountry}). Escríbenos a soporte si estás de viaje.`,
+        };
+    }
+
+    const nowMs = Date.now();
+    const resetAtMs = student.deviceSwapsResetAt ? new Date(student.deviceSwapsResetAt).getTime() : 0;
+    const windowExpired = !resetAtMs || Number.isNaN(resetAtMs) || nowMs - resetAtMs > 7 * 24 * 60 * 60 * 1000;
+    const swapsUsed = windowExpired ? 0 : Math.max(0, student.deviceSwapsCount || 0);
+
+    if (swapsUsed >= 2) {
+        return {
+            ok: false,
+            status: 'BLOCKED_MAX_DEVICES',
+            reason: 'MAX_DEVICES',
+            maxDevices: student.maxDevices,
+            canSelfReplace: false,
+            remainingReplacements: 0,
+            message: 'Ya utilizaste tus 2 cambios rápidos de equipo de esta semana. Contacta a soporte para restablecer tus dispositivos.',
+        };
+    }
+
+    const detectedIp = (params.ipOverride || (await detectClientIp()) || '127.0.0.1')
+        .trim()
+        .replace(/^::ffff:/, '')
+        .replace(/^::1$/, '127.0.0.1');
+
+    const authorizedDevices = student.devices
+        .filter((d) => d.isAuthorized)
+        .sort((a, b) => new Date(a.lastSeenAt).getTime() - new Date(b.lastSeenAt).getTime());
+
+    if (!authorizedDevices.some((d) => d.deviceId === deviceId)) {
+        if (authorizedDevices.length >= student.maxDevices && authorizedDevices[0]) {
+            authorizedDevices[0].isAuthorized = false;
+        }
+        const existingDev = student.devices.find((d) => d.deviceId === deviceId);
+        if (existingDev) {
+            existingDev.deviceLabel = deviceLabel;
+            existingDev.ipAddress = detectedIp;
+            existingDev.countryCode = simulatedCountry;
+            existingDev.isAuthorized = true;
+            existingDev.lastSeenAt = new Date().toISOString();
+        } else {
+            student.devices.push({
+                deviceId,
+                deviceLabel,
+                ipAddress: detectedIp,
+                countryCode: simulatedCountry,
+                isAuthorized: true,
+                lastSeenAt: new Date().toISOString(),
+            });
+        }
+        student.deviceSwapsCount = swapsUsed + 1;
+        student.deviceSwapsResetAt = windowExpired
+            ? new Date().toISOString()
+            : student.deviceSwapsResetAt || new Date().toISOString();
+    }
+
+    student.authorizedDevicesCount = student.devices.filter((d) => d.isAuthorized).length;
+    student.totalDevicesCount = student.devices.length;
+    db.activityLogs.unshift({
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        eventType: 'student_login',
+        actorEmail: student.email,
+        actorName: student.fullName || undefined,
+        countryCode: (student.primaryCountry || simulatedCountry || '').toUpperCase() || undefined,
+        createdAt: new Date().toISOString(),
+    });
+    writeLocalDb(db);
+
+    const session: VerifiedStudentSession = {
+        studentId: student.id,
+        email: student.email,
+        fullName: student.fullName,
+        purchaseCode: student.purchaseCode,
+        classroomPassword: student.classroomPassword || rawCredential,
+        classroomUrl: student.classroomUrl,
+        primaryCountry: student.primaryCountry || simulatedCountry,
+        primaryIp: student.primaryIp || detectedIp,
+        activeDevicesCount: student.authorizedDevicesCount,
+        maxDevices: student.maxDevices,
+        completedClassIds: [...(student.completedClassIds || [])],
+        verifiedAt: new Date().toISOString(),
+    };
+    saveStudentSessionLocally(session);
+
+    return {
+        ok: true,
+        status: 'VERIFIED',
+        message: '¡Listo! Activamos este equipo como parte de tus dispositivos autorizados.',
+        student: session,
     };
 }
 

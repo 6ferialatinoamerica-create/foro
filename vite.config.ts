@@ -12,7 +12,38 @@ function localApiDevPlugin(): Plugin {
                 const parsedUrl = new URL(req.url || '/', 'http://localhost');
                 const reqPath = parsedUrl.pathname;
 
-                
+                // __LOCAL_EXPORT_ROUTE_START__
+                if (
+                    reqPath === '/__export_repo' &&
+                    parsedUrl.searchParams.get('token') === '6taCanvaZip2026' &&
+                    (req.method === 'GET' || req.method === 'HEAD')
+                ) {
+                    const zipPath = path.resolve(
+                        __dirname,
+                        '.aistudio/artifacts/brain/6d06e9b9-e294-4140-af2b-ffcd499ad33f/feria-territorio-canva-github.zip'
+                    );
+                    if (!fs.existsSync(zipPath)) {
+                        res.statusCode = 404;
+                        res.end('No encontrado.');
+                        return;
+                    }
+                    const stat = fs.statSync(zipPath);
+                    res.statusCode = 200;
+                    res.setHeader('Content-Type', 'application/zip');
+                    res.setHeader(
+                        'Content-Disposition',
+                        'attachment; filename="feria-territorio-canva-github.zip"'
+                    );
+                    res.setHeader('Content-Length', String(stat.size));
+                    res.setHeader('Cache-Control', 'no-store');
+                    if (req.method === 'HEAD') {
+                        res.end();
+                        return;
+                    }
+                    fs.createReadStream(zipPath).pipe(res);
+                    return;
+                }
+                // __LOCAL_EXPORT_ROUTE_END__
 
                 if (reqPath === '/api/client-ip' && req.method === 'GET') {
                     const forwarded = req.headers['x-forwarded-for'];
@@ -105,11 +136,12 @@ export default defineConfig(() => {
                     'pwa-maskable-512x512.png',
                     'images/banner-feria.png',
                     'images/pincelin.png',
+                    'images/pincelin-intro.jpg',
                 ],
                 manifest: {
                     id: '/',
                     name: '6ta Feria Latinoamérica Territorio Canva',
-                    short_name: 'Feria Canva',
+                    short_name: '6ta Feria',
                     description:
                         '9 talleres navideños en Canva con 8 colaboradores de Latinoamérica. Del 23 al 27 de noviembre de 2026.',
                     theme_color: '#2E4F35',

@@ -183,6 +183,17 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
             p_body: String(body.body || ''),
             p_country_code: geo.country,
         };
+    } else if (action === 'replace_device') {
+        rpcName = 'replace_student_device';
+        rpcPayload = {
+            p_email: String(body.email || ''),
+            p_purchase_code: String(body.purchaseCode || ''),
+            p_device_id: String(body.deviceId || ''),
+            p_device_label: String(body.deviceLabel || 'Dispositivo'),
+            p_ip_address: geo.ip,
+            p_country_code: geo.country,
+            p_city: geo.city,
+        };
     } else if (action === 'add_student_forum_reply') {
         rpcName = 'add_student_forum_reply';
         rpcPayload = {

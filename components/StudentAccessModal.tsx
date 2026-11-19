@@ -3,16 +3,19 @@ import { GLOBAL_CONFIG } from '../constants';
 import {
     activateStudentAccess,
     checkStudentEmail,
+    replaceStudentDevice,
     saveStudentClassroomCredentials,
     verifyStudentAccess,
 } from '../services/accessService';
 import type { AccessVerificationResult, VerifiedStudentSession } from '../types';
+import { countryCodeToFlag, getCountryDisplayName } from '../utils/countryFlag';
 
 interface StudentAccessModalProps {
     isOpen: boolean;
     onClose: () => void;
     studentSession: VerifiedStudentSession | null;
     blockAlert: AccessVerificationResult | null;
+    blockedCredentials?: { email: string; password: string } | null;
     targetClassTitle?: string;
     onVerified: (session: VerifiedStudentSession) => void;
     onBlocked: (alertResult: AccessVerificationResult) => void;
@@ -20,11 +23,27 @@ interface StudentAccessModalProps {
     onLogout: () => void;
 }
 
+const formatDeviceLastSeen = (iso: string): string => {
+    try {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return 'Uso reciente';
+        return d.toLocaleDateString('es-VE', {
+            day: '2-digit',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    } catch {
+        return 'Uso reciente';
+    }
+};
+
 const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
     isOpen,
     onClose,
     studentSession,
     blockAlert,
+    blockedCredentials,
     targetClassTitle,
     onVerified,
     onBlocked,
@@ -39,7 +58,11 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showInputPassword, setShowInputPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const [isReplacingDevice, setIsReplacingDevice] = useState(false);
+    const [swapPasswordInput, setSwapPasswordInput] = useState('');
+    const [swapEmailInput, setSwapEmailInput] = useState('');
     const [error, setError] = useState<string | null>(null);
+    const [replaceError, setReplaceError] = useState<string | null>(null);
 
     const [showSavedPassword, setShowSavedPassword] = useState(false);
     const [isEditingPassword, setIsEditingPassword] = useState(false);
@@ -50,18 +73,23 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
     useEffect(() => {
         if (!isOpen) return;
         setError(null);
+        setReplaceError(null);
         setPasswordSavedNotice(false);
         if (studentSession) {
             setEditedPassword(studentSession.classroomPassword || '');
             setIsEditingPassword(!studentSession.classroomPassword);
-        } else {
+        } else if (!blockAlert) {
             setAuthStep('email');
             setAccessPassword('');
             setConfirmPassword('');
             setActivationFullName('');
             setCheckedFullName('');
         }
-    }, [isOpen, studentSession]);
+        if (blockedCredentials) {
+            setSwapEmailInput(blockedCredentials.email || '');
+            setSwapPasswordInput(blockedCredentials.password || '');
+        }
+    }, [isOpen, studentSession, blockAlert, blockedCredentials]);
 
     if (!isOpen) return null;
 
@@ -229,7 +257,43 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
         }
     };
 
-    const isIpMismatch = blockAlert?.reason === 'IP_MISMATCH';
+    const effectiveSwapEmail = (blockedCredentials?.email || email || swapEmailInput).trim().toLowerCase();
+    const effectiveSwapPassword = (blockedCredentials?.password || accessPassword || swapPasswordInput).trim();
+    const needsManualSwapCreds = !effectiveSwapEmail || !effectiveSwapPassword;
+
+    const handleReplaceDevice = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+        if (!effectiveSwapEmail || !effectiveSwapPassword) {
+            setReplaceError('Ingresa tu correo y tu clave de ClassOnLive para activar este equipo.');
+            return;
+        }
+        setIsReplacingDevice(true);
+        setReplaceError(null);
+        try {
+            const res = await replaceStudentDevice({
+                email: effectiveSwapEmail,
+                purchaseCode: effectiveSwapPassword,
+            });
+            if (res.ok && res.student) {
+                onVerified(res.student);
+            } else if (res.status === 'BLOCKED_MAX_DEVICES' || res.status === 'BLOCKED_GEO') {
+                onBlocked(res);
+                setReplaceError(res.message);
+            } else {
+                setReplaceError(res.message || 'No pudimos activar este equipo. Revisa tu correo y clave.');
+            }
+        } catch {
+            setReplaceError('Error de conexión al activar este equipo. Intenta nuevamente.');
+        } finally {
+            setIsReplacingDevice(false);
+        }
+    };
+
+    const isCountryMismatch = blockAlert?.reason === 'COUNTRY_MISMATCH';
+    const isMaxDevicesBlock = !isCountryMismatch;
+    const canSelfReplace = Boolean(blockAlert?.canSelfReplace) && isMaxDevicesBlock;
+    const activeDevicesList = Array.isArray(blockAlert?.activeDevices) ? blockAlert.activeDevices : [];
+    const remainingSwaps = typeof blockAlert?.remainingReplacements === 'number' ? blockAlert.remainingReplacements : 0;
 
     return (
         <div className="fixed inset-0 bg-[#2B2B2B]/70 backdrop-blur-sm flex items-center justify-center z-[60] p-4 overflow-y-auto">
@@ -245,7 +309,7 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
 
                 {blockAlert ? (
                     <div className="space-y-4">
-                        <div className="flex items-start gap-3 p-4 pr-10 rounded-2xl bg-[#A3363D]/10 border border-[#A3363D]">
+                        <div className="flex items-start gap-3 p-4 pr-10 rounded-2xl bg-[#FFF4C7]/70 border border-[#E5C158]">
                             <svg
                                 xmlns="http://www.w3.org/2000/svg"
                                 viewBox="0 0 24 24"
@@ -261,68 +325,157 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
                             </svg>
                             <div>
                                 <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#A3363D]">
-                                    Acceso bloqueado por seguridad
+                                    {isCountryMismatch
+                                        ? 'Verificación de seguridad por país'
+                                        : 'Protección de tu cuenta'}
                                 </p>
                                 <h3 className="font-title text-xl font-bold text-[#2B2B2B] mt-1">
-                                    {isIpMismatch
-                                        ? 'Conexión desde una IP distinta'
-                                        : 'Límite de dispositivos excedido'}
+                                    {isCountryMismatch
+                                        ? 'Acceso desde otro país detectado'
+                                        : `Ya alcanzaste tus ${blockAlert.maxDevices ?? 2} equipos personales`}
                                 </h3>
                             </div>
                         </div>
 
-                        <p className="text-sm md:text-base text-[#2B2B2B] font-semibold leading-relaxed bg-[#FBF5E6] p-4 rounded-2xl border border-[#E5DAC0]">
-                            {blockAlert.message}
-                        </p>
-
-                        <div className="grid grid-cols-2 gap-3 text-xs bg-[#FBF5E6] p-3.5 rounded-2xl border border-[#E5DAC0] tabular-nums">
-                            <div>
-                                <span className="block text-[#2B2B2B]/65">Dispositivos detectados</span>
-                                <strong className="text-sm text-[#A3363D]">
-                                    {blockAlert.detectedDevicesCount ?? '2+'} dispositivos
-                                </strong>
-                            </div>
-                            <div>
-                                <span className="block text-[#2B2B2B]/65">Límite permitido</span>
-                                <strong className="text-sm text-[#2E4F35]">
-                                    Máx. {blockAlert.maxDevices ?? 2} en la misma IP
-                                </strong>
-                            </div>
-                            {blockAlert.primaryIp && (
-                                <div>
-                                    <span className="block text-[#2B2B2B]/65">IP autorizada</span>
-                                    <strong className="text-[#2B2B2B] font-mono">
-                                        {blockAlert.primaryIp}
-                                    </strong>
-                                </div>
-                            )}
-                            {blockAlert.attemptedIp && (
-                                <div>
-                                    <span className="block text-[#2B2B2B]/65">IP detectada</span>
-                                    <strong className="text-[#A3363D] font-mono">
-                                        {blockAlert.attemptedIp}
-                                    </strong>
-                                </div>
+                        <div className="bg-[#FBF5E6] p-4 rounded-2xl border border-[#E5DAC0] space-y-2.5 text-sm text-[#2B2B2B] leading-relaxed">
+                            {isCountryMismatch ? (
+                                <>
+                                    <p className="font-semibold">
+                                        {blockAlert.message}
+                                    </p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-xs">
+                                        {blockAlert.primaryCountry && (
+                                            <div className="bg-[#FFFDF7] border border-[#E5DAC0] rounded-xl p-2.5">
+                                                <span className="block text-[#2B2B2B]/65">País registrado</span>
+                                                <strong className="text-[#2E4F35] inline-flex items-center gap-1.5 mt-0.5">
+                                                    <span>{countryCodeToFlag(blockAlert.primaryCountry)}</span>
+                                                    <span>{getCountryDisplayName(blockAlert.primaryCountry)}</span>
+                                                </strong>
+                                            </div>
+                                        )}
+                                        {blockAlert.attemptedCountry && (
+                                            <div className="bg-[#FFFDF7] border border-[#E5DAC0] rounded-xl p-2.5">
+                                                <span className="block text-[#2B2B2B]/65">País detectado ahora</span>
+                                                <strong className="text-[#A3363D] inline-flex items-center gap-1.5 mt-0.5">
+                                                    <span>{countryCodeToFlag(blockAlert.attemptedCountry)}</span>
+                                                    <span>{getCountryDisplayName(blockAlert.attemptedCountry)}</span>
+                                                </strong>
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <p className="font-semibold">
+                                        Como esta aplicación web se abre directo desde tu navegador (sin descargarse desde una tienda de aplicaciones), incluye una medida de seguridad automática que permite tener tu pase activo en{' '}
+                                        <strong>máximo {blockAlert.maxDevices ?? 2} equipos personales a la vez</strong> para proteger tu inscripción.
+                                    </p>
+                                    <p className="text-xs text-[#2B2B2B]/80">
+                                        Con tus 2 equipos autorizados puedes usar el Wi-Fi de tu casa, tus datos móviles en el transporte o el Wi-Fi de tu trabajo sin ningún bloqueo. Este aviso solo aparece cuando intentas entrar desde un{' '}
+                                        <strong>equipo nuevo adicional</strong>.
+                                    </p>
+                                </>
                             )}
                         </div>
 
-                        <p className="text-xs text-[#2B2B2B]/80 leading-relaxed">
-                            Para evitar enlaces compartidos con terceros, cada pase funciona hasta en{' '}
-                            <strong>2 dispositivos conectados desde la misma IP</strong>. Si cambiaste de red, router o equipo, solicita al administrador restablecer tus dispositivos.
-                        </p>
+                        {isMaxDevicesBlock && activeDevicesList.length > 0 && (
+                            <div className="bg-[#FFFDF7] border border-[#E5DAC0] rounded-2xl p-3.5 space-y-2">
+                                <p className="text-xs font-bold text-[#3F6B45]">
+                                    Equipos donde ya tienes tu pase activo:
+                                </p>
+                                <ul className="space-y-1.5">
+                                    {activeDevicesList.map((dev, idx) => (
+                                        <li
+                                            key={`${dev.deviceLabel}-${idx}`}
+                                            className="flex items-center justify-between gap-2 text-xs bg-[#FBF5E6] px-3 py-2 rounded-xl border border-[#E5DAC0]"
+                                        >
+                                            <span className="font-semibold text-[#2B2B2B] truncate">
+                                                {idx === 0 ? '1. ' : `${idx + 1}. `}
+                                                {dev.deviceLabel}
+                                            </span>
+                                            <span className="text-[11px] text-[#2B2B2B]/65 shrink-0 tabular-nums">
+                                                {formatDeviceLastSeen(dev.lastSeenAt)}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+
+                        {canSelfReplace ? (
+                            <form onSubmit={handleReplaceDevice} className="bg-[#3F6B45]/10 border border-[#3F6B45]/40 rounded-2xl p-4 space-y-3">
+                                <p className="text-xs sm:text-sm text-[#2B2B2B] leading-relaxed">
+                                    <strong>¿Se fue la luz en casa, cambiaste de celular o estás en otra computadora?</strong>{' '}
+                                    No te preocupes: toca el botón verde para activar <strong>este equipo ahora mismo</strong> (se desconectará automáticamente el más antiguo de la lista).
+                                </p>
+
+                                {needsManualSwapCreds && (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        {!effectiveSwapEmail && (
+                                            <input
+                                                type="email"
+                                                required
+                                                value={swapEmailInput}
+                                                onChange={(e) => setSwapEmailInput(e.target.value)}
+                                                placeholder="Tu correo de compra"
+                                                className="px-3 py-2 rounded-xl bg-[#FFFDF7] border border-[#E5DAC0] text-xs text-[#2B2B2B]"
+                                            />
+                                        )}
+                                        {!effectiveSwapPassword && (
+                                            <input
+                                                type="password"
+                                                required
+                                                value={swapPasswordInput}
+                                                onChange={(e) => setSwapPasswordInput(e.target.value)}
+                                                placeholder="Tu clave de ClassOnLive"
+                                                className="px-3 py-2 rounded-xl bg-[#FFFDF7] border border-[#E5DAC0] text-xs text-[#2B2B2B]"
+                                            />
+                                        )}
+                                    </div>
+                                )}
+
+                                {replaceError && (
+                                    <p className="text-xs font-semibold text-[#A3363D] bg-[#A3363D]/10 p-2.5 rounded-xl border border-[#A3363D]/30" role="alert">
+                                        {replaceError}
+                                    </p>
+                                )}
+
+                                <button
+                                    type="submit"
+                                    disabled={isReplacingDevice}
+                                    className="w-full py-3.5 px-5 rounded-full bg-[#3F6B45] hover:bg-[#2E4F35] disabled:opacity-60 text-white text-sm font-bold shadow-md transition-colors"
+                                >
+                                    {isReplacingDevice
+                                        ? 'Activando este equipo...'
+                                        : 'Usar este equipo ahora (reemplazar el más antiguo)'}
+                                </button>
+
+                                <p className="text-[11px] text-center font-semibold text-[#2E4F35] tabular-nums">
+                                    {remainingSwaps === 1
+                                        ? 'Te queda 1 cambio rápido disponible esta semana.'
+                                        : `Te quedan ${remainingSwaps} cambios rápidos disponibles esta semana.`}
+                                </p>
+                            </form>
+                        ) : (
+                            <p className="text-xs text-[#2B2B2B]/85 leading-relaxed bg-[#FBF5E6] p-3.5 rounded-2xl border border-[#E5DAC0]">
+                                {isCountryMismatch
+                                    ? 'Si estás de viaje o usando una VPN, desactiva tu VPN o escríbenos al equipo de soporte para autorizar tu acceso temporalmente.'
+                                    : 'Ya utilizaste tus 2 cambios automáticos de equipo de esta semana. Por seguridad, escribe a soporte o a tu coordinadora para liberar tus equipos en segundos.'}
+                            </p>
+                        )}
 
                         <div className="flex flex-col sm:flex-row gap-3 pt-1">
                             <button
                                 type="button"
                                 onClick={onClearBlock}
-                                className="flex-1 py-3 px-4 rounded-full bg-[#3F6B45] hover:bg-[#2E4F35] text-white text-sm font-bold transition-colors"
+                                className="flex-1 py-2.5 px-4 rounded-full bg-[#FBF5E6] border border-[#E5DAC0] hover:border-[#3F6B45] text-[#2B2B2B] text-xs sm:text-sm font-bold transition-colors"
                             >
-                                Intentar con otra cuenta
+                                Probar con otro correo
                             </button>
                             <button
                                 type="button"
                                 onClick={onClose}
-                                className="flex-1 py-3 px-4 rounded-full bg-[#FBF5E6] border border-[#E5DAC0] hover:border-[#A3363D] text-[#2B2B2B] text-sm font-semibold transition-colors"
+                                className="flex-1 py-2.5 px-4 rounded-full bg-[#FBF5E6] border border-[#E5DAC0] hover:border-[#A3363D] text-[#2B2B2B] text-xs sm:text-sm font-semibold transition-colors"
                             >
                                 Cerrar
                             </button>
@@ -338,8 +491,7 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
                                 ¡Bienvenida{studentSession.fullName ? `, ${studentSession.fullName}` : ''}!
                             </h3>
                             <p className="text-xs text-[#2B2B2B]/75 mt-1 tabular-nums">
-                                Dispositivos activos: {studentSession.activeDevicesCount} de {studentSession.maxDevices}
-                                {studentSession.primaryIp ? ` · IP autorizada: ${studentSession.primaryIp}` : ''}
+                                Equipos personales activos: {studentSession.activeDevicesCount} de {studentSession.maxDevices} · Funciona con Wi-Fi o datos móviles
                             </p>
                             {targetClassTitle && (
                                 <p className="text-xs font-semibold text-[#2E4F35] mt-2">
@@ -468,10 +620,11 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
                             </p>
 
                             <div className="flex items-center justify-between text-xs pt-1">
-                                <span className="text-[#2B2B2B]/70 tabular-nums">
-                                    {studentSession.primaryIp
-                                        ? `Protegido en IP ${studentSession.primaryIp}`
-                                        : 'Acceso verificado'}
+                                <span className="text-[#2B2B2B]/70 tabular-nums inline-flex items-center gap-1.5">
+                                    {countryCodeToFlag(studentSession.primaryCountry) && (
+                                        <span aria-hidden="true">{countryCodeToFlag(studentSession.primaryCountry)}</span>
+                                    )}
+                                    <span>Acceso personal protegido</span>
                                 </span>
                                 <button
                                     type="button"
@@ -496,7 +649,7 @@ const StudentAccessModal: React.FC<StudentAccessModalProps> = ({
                             </h3>
                             <p className="text-xs md:text-sm text-[#2B2B2B]/80 mt-1.5 leading-relaxed">
                                 {authStep === 'email'
-                                    ? 'Ingresa el correo electrónico con el que compraste tu entrada. Protegemos tu acceso hasta en 2 dispositivos conectados desde la misma IP.'
+                                    ? 'Ingresa el correo con el que te inscribiste. Como esta aplicación web funciona directo desde tu navegador (sin descargarse de una tienda de aplicaciones), por seguridad protegemos tu pase hasta en 2 equipos personales (por ejemplo, tu celular y tu computadora). Puedes usarlos con Wi-Fi de casa, datos móviles o en tu trabajo.'
                                     : authStep === 'activate'
                                       ? '¡Estás inscrita! Pega aquí la contraseña que recibiste de ClassOnLive para guardarla en este equipo y copiarla rápido al entrar a tus clases.'
                                       : 'Ingresa tu contraseña de ClassOnLive registrada para desbloquear tu acceso.'}

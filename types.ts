@@ -71,6 +71,11 @@ export interface VerifiedStudentSession {
     verifiedAt: string;
 }
 
+export interface ActiveDeviceSummary {
+    deviceLabel: string;
+    lastSeenAt: string;
+}
+
 export interface AccessVerificationResult {
     ok: boolean;
     status: StudentAccessStatus;
@@ -79,6 +84,9 @@ export interface AccessVerificationResult {
     student?: VerifiedStudentSession;
     detectedDevicesCount?: number;
     maxDevices?: number;
+    canSelfReplace?: boolean;
+    remainingReplacements?: number;
+    activeDevices?: ActiveDeviceSummary[];
     primaryCountry?: string;
     attemptedCountry?: string;
     countriesSeen?: string[];

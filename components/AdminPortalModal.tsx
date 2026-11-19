@@ -782,7 +782,7 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
     const handleResetDevices = async (studentId: string, email: string) => {
         const res = await resetAdminStudentDevices({ adminEmail, accessKey, studentId });
         if (res.ok) {
-            setFeedbackMsg(`Dispositivos e IP autorizada restablecidos para ${email}.`);
+            setFeedbackMsg(`Dispositivos restablecidos para ${email}. La alumna ya puede activar su equipo nuevamente.`);
             await loadDashboard(adminEmail, accessKey);
         }
     };
@@ -1148,9 +1148,9 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
     if (!isOpen) return null;
 
     const getAlertReasonLabel = (reason: DeviceAccessAlert['reason']) => {
-        if (reason === 'IP_MISMATCH') return 'Bloqueo por IP distinta (posible enlace compartido)';
+        if (reason === 'IP_MISMATCH') return 'Cambio de red histórico (aviso anterior)';
         if (reason === 'COUNTRY_MISMATCH') return 'Bloqueo por país distinto';
-        return 'Bloqueo por exceso de dispositivos (>2 equipos)';
+        return 'Límite de equipos alcanzado (cambios semanales agotados)';
     };
 
     return (
@@ -1882,7 +1882,7 @@ const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                                         />
                                         <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#FFFDF7] border border-[#E5DAC0] text-xs">
                                             <label className="flex items-center gap-1.5 font-semibold text-[#2B2B2B]">
-                                                <span>Máx. equipos (misma IP):</span>
+                                                <span>Máx. equipos por alumna:</span>
                                                 <select
                                                     value={stuMaxDevices}
                                                     onChange={(e) => setStuMaxDevices(Number(e.target.value))}

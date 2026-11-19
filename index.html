@@ -9,7 +9,7 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Feria Canva" />
+    <meta name="apple-mobile-web-app-title" content="6ta Feria" />
     <title>6ta Feria Latinoamérica Territorio Canva · Edición Navideña</title>
     <meta name="description" content="9 talleres para crear productos navideños en Canva y tenerlos listos para uso personal, regalos o vender esta temporada. Del 23 al 27 de noviembre de 2026." />
     <meta property="og:title" content="6ta Feria Latinoamérica Territorio Canva · Edición Navideña" />
@@ -131,6 +131,21 @@
                             '50%': {
                                 transform: 'translateY(-6px)',
                             }
+                        },
+                        'wing-wave': {
+                            '0%': { transform: 'rotate(0deg)' },
+                            '22%': { transform: 'rotate(-7deg)' },
+                            '48%': { transform: 'rotate(5deg)' },
+                            '74%': { transform: 'rotate(-4deg)' },
+                            '100%': { transform: 'rotate(0deg)' },
+                        },
+                        'splash-text-in': {
+                            '0%': { opacity: '0', transform: 'translate3d(0, 14px, 0)' },
+                            '100%': { opacity: '1', transform: 'translate3d(0, 0, 0)' },
+                        },
+                        'splash-image-in': {
+                            '0%': { opacity: '0', transform: 'translate3d(-10px, 0, 0) scale(0.97)' },
+                            '100%': { opacity: '1', transform: 'translate3d(0, 0, 0) scale(1)' },
                         }
                     },
                     animation: {
@@ -139,6 +154,9 @@
                         'pulse-color': 'pulse-color 2.5s infinite ease-in-out',
                         'neon-pulse-whatsapp': 'neon-pulse-whatsapp 2.5s infinite ease-in-out',
                         'levitate': 'levitate 3.5s ease-in-out infinite',
+                        'wing-wave': 'wing-wave 1.35s cubic-bezier(0.37, 0, 0.63, 1) 0.15s 1 both',
+                        'splash-text-in': 'splash-text-in 0.75s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both',
+                        'splash-image-in': 'splash-image-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both',
                     }
                 }
             }
